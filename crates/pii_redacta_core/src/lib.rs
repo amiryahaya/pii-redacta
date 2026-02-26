@@ -2,6 +2,9 @@
 //!
 //! Core functionality for PII detection and tokenization.
 
+pub mod detection;
+pub mod types;
+
 /// Core version
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 

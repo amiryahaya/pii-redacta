@@ -12,9 +12,16 @@ description = "Core PII detection and tokenization library"
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
+regex = { workspace = true }
+once_cell = { workspace = true }
 
 [dev-dependencies]
 tokio-test = { workspace = true }
+criterion = { workspace = true }
+
+[[bench]]
+name = "detection_bench"
+harness = false
 
 [lib]
 name = "pii_redacta_core"
