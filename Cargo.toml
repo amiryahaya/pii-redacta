@@ -1,0 +1,28 @@
+[workspace]
+members = [
+    "crates/pii_redacta_core",
+    "crates/pii_redacta_api",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+authors = ["PII Redacta Team"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/amiryahaya/pii-redacta"
+rust-version = "1.75"
+
+[workspace.dependencies]
+# Core dependencies
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "1.0"
+
+# Async runtime
+tokio = { version = "1.35", features = ["full"] }
+
+# Testing
+tokio-test = "0.4"
+
+# NOTE: Additional dependencies will be added per sprint as needed
