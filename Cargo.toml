@@ -30,6 +30,9 @@ tokio = { version = "1.35", features = ["full"] }
 axum = { version = "0.7", features = ["json"] }
 tower = "0.4"
 
+# Utilities
+uuid = { version = "1.6", features = ["v4"] }
+
 # Testing
 tokio-test = "0.4"
 criterion = { version = "0.5", default-features = false }

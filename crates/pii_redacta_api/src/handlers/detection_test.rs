@@ -5,13 +5,12 @@
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::Json;
-use pii_redacta_core::detection::PatternDetector;
 use std::sync::Arc;
 
 use super::*;
 
-fn create_test_state() -> Arc<PatternDetector> {
-    Arc::new(PatternDetector::new())
+fn create_test_state() -> Arc<JobQueue> {
+    Arc::new(JobQueue::new())
 }
 
 #[tokio::test]

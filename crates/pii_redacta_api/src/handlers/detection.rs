@@ -6,6 +6,8 @@ use pii_redacta_core::tokenization::Tokenizer;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
+use super::JobQueue;
+
 #[derive(Deserialize)]
 pub struct DetectRequest {
     pub text: String,
@@ -27,7 +29,7 @@ pub struct DetectResponse {
 }
 
 pub async fn detect(
-    State(detector): State<Arc<PatternDetector>>,
+    State(_queue): State<Arc<JobQueue>>,
     Json(request): Json<DetectRequest>,
 ) -> (StatusCode, Json<DetectResponse>) {
     // Validate input
@@ -42,6 +44,7 @@ pub async fn detect(
         );
     }
 
+    let detector = PatternDetector::new();
     let start = std::time::Instant::now();
 
     // Detect entities

@@ -8,15 +8,17 @@ use axum::{
     routing::{get, post},
     Router,
 };
-use pii_redacta_core::detection::PatternDetector;
+use handlers::JobQueue;
 use std::sync::Arc;
 
 /// Create the API router
 pub fn create_app() -> Router {
-    let detector = Arc::new(PatternDetector::new());
+    let job_queue = Arc::new(JobQueue::new());
 
     Router::new()
         .route("/health", get(handlers::health::health))
         .route("/api/v1/detect", post(handlers::detection::detect))
-        .with_state(detector)
+        .route("/api/v1/upload", post(handlers::upload::upload))
+        .route("/api/v1/jobs/:job_id", get(handlers::jobs::get_job_status))
+        .with_state(job_queue)
 }
