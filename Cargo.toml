@@ -28,7 +28,7 @@ tokio = { version = "1.35", features = ["full"] }
 
 # Web framework
 axum = { version = "0.7", features = ["json"] }
-tower = "0.4"
+tower = { version = "0.4", features = ["util"] }
 
 # Utilities
 uuid = { version = "1.6", features = ["v4"] }
