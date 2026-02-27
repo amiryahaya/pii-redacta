@@ -8,6 +8,10 @@ repository.workspace = true
 rust-version.workspace = true
 description = "REST API for PII Redacta"
 
+[lib]
+name = "pii_redacta_api"
+path = "src/lib.rs"
+
 [[bin]]
 name = "pii-redacta-api"
 path = "src/main.rs"
@@ -17,6 +21,7 @@ pii_redacta_core = { path = "../pii_redacta_core" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true }
+axum = { workspace = true }
 
 [dev-dependencies]
 tokio-test = { workspace = true }

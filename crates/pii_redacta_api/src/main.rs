@@ -2,21 +2,17 @@
 //!
 //! REST API for PII detection and redaction.
 
-use pii_redacta_core::VERSION;
+use pii_redacta_api::create_app;
 
 #[tokio::main]
 async fn main() {
-    println!("PII Redacta API v{VERSION} - Sprint 1 Foundation");
-    // Placeholder for Sprint 1 - will be implemented in Sprint 4
-}
+    let app = create_app();
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+    let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await.unwrap();
+    println!(
+        "PII Redacta API listening on {}",
+        listener.local_addr().unwrap()
+    );
 
-    #[test]
-    fn test_core_version_accessible() {
-        // Verify we can access core library version
-        assert!(!VERSION.is_empty());
-    }
+    axum::serve(listener, app).await.unwrap();
 }
