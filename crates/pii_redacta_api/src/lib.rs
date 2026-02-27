@@ -17,6 +17,7 @@ pub fn create_app() -> Router {
 
     Router::new()
         .route("/health", get(handlers::health::health))
+        .route("/metrics", get(handlers::metrics::metrics))
         .route("/api/v1/detect", post(handlers::detection::detect))
         .route("/api/v1/upload", post(handlers::upload::upload))
         .route("/api/v1/jobs/:job_id", get(handlers::jobs::get_job_status))

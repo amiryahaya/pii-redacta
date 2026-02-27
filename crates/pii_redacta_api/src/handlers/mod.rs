@@ -3,6 +3,7 @@
 pub mod detection;
 pub mod health;
 pub mod jobs;
+pub mod metrics;
 pub mod upload;
 
 use serde::{Deserialize, Serialize};

@@ -26,7 +26,7 @@ async fn test_upload_txt_file() {
          Content-Type: text/plain\r\n\r\n\
          Email: test@example.com\r\n\
          ------WebKitFormBoundary--\r\n"
-    .to_string();
+        .to_string();
 
     let request = Request::builder()
         .method("POST")
@@ -54,7 +54,7 @@ async fn test_upload_returns_job_id() {
          Content-Type: text/plain\r\n\r\n\
          Test content\r\n\
          ------WebKitFormBoundary--\r\n"
-    .to_string();
+        .to_string();
 
     let request = Request::builder()
         .method("POST")
@@ -83,7 +83,7 @@ async fn test_upload_pdf_file() {
          Content-Type: application/pdf\r\n\r\n\
          %PDF-1.4 test content\r\n\
          ------WebKitFormBoundary--\r\n"
-    .to_string();
+        .to_string();
 
     let request = Request::builder()
         .method("POST")
@@ -110,7 +110,7 @@ async fn test_upload_missing_file_bad_request() {
          Content-Disposition: form-data; name=\"other\"\r\n\r\n\
          value\r\n\
          ------WebKitFormBoundary--\r\n"
-    .to_string();
+        .to_string();
 
     let request = Request::builder()
         .method("POST")
@@ -137,7 +137,7 @@ async fn test_upload_unsupported_type() {
          Content-Type: application/unknown\r\n\r\n\
          binary content\r\n\
          ------WebKitFormBoundary--\r\n"
-    .to_string();
+        .to_string();
 
     let request = Request::builder()
         .method("POST")
