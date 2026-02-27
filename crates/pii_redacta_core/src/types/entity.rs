@@ -18,6 +18,24 @@ pub enum EntityType {
     IpAddress,
 }
 
+impl std::fmt::Display for EntityType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            EntityType::Email => "EMAIL",
+            EntityType::PhoneNumber => "PHONE",
+            EntityType::MalaysianNric => "MY_NRIC",
+            EntityType::PassportNumber => "PASSPORT",
+            EntityType::CreditCard => "CREDIT_CARD",
+            EntityType::BankAccount => "BANK_ACCOUNT",
+            EntityType::Address => "ADDRESS",
+            EntityType::PersonName => "PERSON_NAME",
+            EntityType::DateOfBirth => "DOB",
+            EntityType::IpAddress => "IP_ADDRESS",
+        };
+        write!(f, "{}", s)
+    }
+}
+
 /// Detected PII entity
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Entity {

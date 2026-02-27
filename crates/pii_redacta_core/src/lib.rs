@@ -3,6 +3,7 @@
 //! Core functionality for PII detection and tokenization.
 
 pub mod detection;
+pub mod tokenization;
 pub mod types;
 
 /// Core version
