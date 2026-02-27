@@ -1,10 +1,14 @@
 //! API handlers
 
+pub mod api_keys;
+pub mod auth;
 pub mod detection;
 pub mod health;
 pub mod jobs;
 pub mod metrics;
+pub mod subscription;
 pub mod upload;
+pub mod usage;
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;

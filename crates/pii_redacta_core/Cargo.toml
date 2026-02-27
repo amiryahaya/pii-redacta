@@ -9,6 +9,7 @@ rust-version.workspace = true
 description = "Core PII detection and tokenization library"
 
 [dependencies]
+# Core dependencies
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
@@ -16,6 +17,28 @@ regex = { workspace = true }
 once_cell = { workspace = true }
 sha2 = { workspace = true }
 hex = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
+base64 = { workspace = true }
+
+# Database
+sqlx = { workspace = true }
+
+# Caching
+redis = { workspace = true }
+
+# Security
+argon2 = { workspace = true }
+hmac = { workspace = true }
+
+# Random number generation
+rand = { workspace = true }
+
+# Networking
+ipnetwork = { workspace = true }
+
+# Async runtime
+tokio = { workspace = true }
 
 [dev-dependencies]
 tokio-test = { workspace = true }

@@ -1,0 +1,74 @@
+# Podman Compose for Testing Infrastructure
+# 
+# Usage:
+#   podman-compose -f podman-compose.test.yml up -d
+#   ./scripts/run-tests.sh
+#   podman-compose -f podman-compose.test.yml down
+#
+# Or with podman directly:
+#   podman play kube podman-test-infra.yaml
+
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: docker.io/postgres:16-alpine
+    container_name: pii-redacta-test-db
+    environment:
+      POSTGRES_USER: pii_redacta
+      POSTGRES_PASSWORD: pii_redacta_dev
+      POSTGRES_DB: pii_redacta_test
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_test_data:/var/lib/postgresql/data
+      - ./crates/pii_redacta_core/migrations:/docker-entrypoint-initdb.d:Z
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pii_redacta -d pii_redacta_test"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Redis (for caching and rate limiting)
+  redis:
+    image: docker.io/redis:7-alpine
+    container_name: pii-redacta-test-redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Backend API
+  api:
+    build:
+      context: .
+      containerfile: Containerfile.api
+    container_name: pii-redacta-test-api
+    environment:
+      RUST_LOG: debug
+      DATABASE_URL: postgres://pii_redacta:pii_redacta_dev@postgres:5432/pii_redacta_test
+      REDIS_URL: redis://redis:6379
+      JWT_SECRET: test-secret-key-at-least-32-bytes-long-for-testing
+      SERVER_PORT: 8080
+      PII_REDACTA_SERVER_HOST: 0.0.0.0
+      PII_REDACTA_SERVER_PORT: 8080
+      PII_REDACTA_DATABASE_URL: postgres://pii_redacta:pii_redacta_dev@postgres:5432/pii_redacta_test
+      PII_REDACTA_REDIS_URL: redis://redis:6379
+      PII_REDACTA_JWT_SECRET: test-secret-key-at-least-32-bytes-long-for-testing
+    ports:
+      - "8080:8080"
+    depends_on:
+      - postgres
+      - redis
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  postgres_test_data:

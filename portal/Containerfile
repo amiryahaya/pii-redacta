@@ -1,0 +1,38 @@
+# Dockerfile for PII Redacta Portal
+#
+# Build: docker build -t pii-redacta-portal .
+# Run: docker run -p 5173:5173 pii-redacta-portal
+
+# Build stage
+FROM node:20-slim as builder
+
+WORKDIR /app
+
+# Copy package files
+COPY package*.json ./
+
+# Install dependencies
+RUN npm ci
+
+# Copy source code
+COPY . .
+
+# Build the application
+RUN npm run build
+
+# Runtime stage
+FROM node:20-slim
+
+WORKDIR /app
+
+# Install serve
+RUN npm install -g serve
+
+# Copy built files
+COPY --from=builder /app/dist ./dist
+
+# Expose port
+EXPOSE 5173
+
+# Serve the application
+CMD ["serve", "-s", "dist", "-l", "5173"]

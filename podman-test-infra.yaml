@@ -1,0 +1,69 @@
+# Podman Play YAML for Test Infrastructure
+# 
+# Usage:
+#   podman play kube podman-test-infra.yaml
+#   podman play kube --down podman-test-infra.yaml  # Stop
+
+apiVersion: v1
+kind: Pod
+metadata:
+  name: pii-redacta-test-infra
+spec:
+  containers:
+    # PostgreSQL
+    - name: postgres
+      image: docker.io/postgres:16-alpine
+      env:
+        - name: POSTGRES_USER
+          value: pii_redacta
+        - name: POSTGRES_PASSWORD
+          value: pii_redacta_dev
+        - name: POSTGRES_DB
+          value: pii_redacta_test
+      ports:
+        - containerPort: 5432
+          hostPort: 5432
+      volumeMounts:
+        - name: postgres-data
+          mountPath: /var/lib/postgresql/data
+      livenessProbe:
+        exec:
+          command:
+            - pg_isready
+            - -U
+            - pii_redacta
+            - -d
+            - pii_redacta_test
+        initialDelaySeconds: 5
+        periodSeconds: 5
+
+    # Redis
+    - name: redis
+      image: docker.io/redis:7-alpine
+      ports:
+        - containerPort: 6379
+          hostPort: 6379
+      livenessProbe:
+        exec:
+          command:
+            - redis-cli
+            - ping
+        initialDelaySeconds: 5
+        periodSeconds: 5
+
+  volumes:
+    - name: postgres-data
+      persistentVolumeClaim:
+        claimName: postgres-test-data
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-test-data
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
