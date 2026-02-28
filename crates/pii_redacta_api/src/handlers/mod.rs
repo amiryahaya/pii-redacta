@@ -70,13 +70,13 @@ impl JobQueue {
 
     pub async fn submit(&self, job: Job) -> String {
         let id = job.id.clone();
-        let mut jobs = self.jobs.lock().unwrap();
+        let mut jobs = self.jobs.lock().expect("JobQueue mutex poisoned");
         jobs.insert(id.clone(), job);
         id
     }
 
     pub fn get(&self, job_id: &str) -> Option<Job> {
-        let jobs = self.jobs.lock().unwrap();
+        let jobs = self.jobs.lock().expect("JobQueue mutex poisoned");
         jobs.get(job_id).cloned()
     }
 }

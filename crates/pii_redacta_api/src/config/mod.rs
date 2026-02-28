@@ -75,8 +75,8 @@ impl Default for ServerConfig {
     }
 }
 
-/// Database configuration
-#[derive(Debug, Clone, Deserialize)]
+/// Database configuration (S9-R3-15: custom Debug redacts credentials)
+#[derive(Clone, Deserialize)]
 pub struct DatabaseConfig {
     /// Database URL
     #[serde(default = "default_database_url")]
@@ -84,6 +84,29 @@ pub struct DatabaseConfig {
     /// Maximum number of connections in the pool
     #[serde(default = "default_max_connections")]
     pub max_connections: u32,
+}
+
+impl std::fmt::Debug for DatabaseConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Redact credentials from the URL (S9-R3-15)
+        let redacted_url = if let Some(at_pos) = self.url.find('@') {
+            if let Some(scheme_end) = self.url.find("://") {
+                format!(
+                    "{}://***:***{}",
+                    &self.url[..scheme_end],
+                    &self.url[at_pos..]
+                )
+            } else {
+                "[redacted]".to_string()
+            }
+        } else {
+            self.url.clone()
+        };
+        f.debug_struct("DatabaseConfig")
+            .field("url", &redacted_url)
+            .field("max_connections", &self.max_connections)
+            .finish()
+    }
 }
 
 fn default_database_url() -> String {
@@ -123,8 +146,8 @@ impl Default for RedisConfig {
     }
 }
 
-/// JWT configuration
-#[derive(Debug, Clone, Deserialize)]
+/// JWT configuration (S9-R3-09: custom Debug redacts secret)
+#[derive(Clone, Deserialize)]
 pub struct JwtConfig {
     /// JWT secret (minimum 32 bytes)
     #[serde(default = "default_jwt_secret")]
@@ -132,6 +155,15 @@ pub struct JwtConfig {
     /// Token expiration time in hours
     #[serde(default = "default_jwt_expiration")]
     pub expiration_hours: i64,
+}
+
+impl std::fmt::Debug for JwtConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("JwtConfig")
+            .field("secret", &"[redacted]")
+            .field("expiration_hours", &self.expiration_hours)
+            .finish()
+    }
 }
 
 fn default_jwt_secret() -> String {
@@ -231,13 +263,21 @@ impl Default for RateLimitConfig {
     }
 }
 
-/// API key HMAC configuration
-#[derive(Debug, Clone, Deserialize)]
+/// API key HMAC configuration (S9-R3-09: custom Debug redacts secret)
+#[derive(Clone, Deserialize)]
 pub struct ApiKeyConfig {
     /// Base64-encoded server secret for API key HMAC (minimum 32 bytes decoded)
     /// Generate with: openssl rand -base64 32
     #[serde(default = "default_api_key_secret")]
     pub secret: String,
+}
+
+impl std::fmt::Debug for ApiKeyConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ApiKeyConfig")
+            .field("secret", &"[redacted]")
+            .finish()
+    }
 }
 
 fn default_api_key_secret() -> String {
@@ -298,6 +338,33 @@ impl Config {
             ));
         }
 
+        // S9-R3-10: Warn if JWT secret is still the default
+        if self.jwt.secret == default_jwt_secret() {
+            tracing::warn!(
+                "JWT secret is set to the default value. Set PII_REDACTA_JWT_SECRET in production."
+            );
+        }
+
+        // S9-R3-14: Validate API key secret is non-empty and looks like base64
+        if self.api_key.secret.is_empty() {
+            return Err(ConfigError::Validation(
+                "API key secret cannot be empty".to_string(),
+            ));
+        }
+        // Base64-encoded 32 bytes = at least 44 characters
+        if self.api_key.secret.len() < 44 {
+            return Err(ConfigError::Validation(
+                "API key secret is too short (must be base64-encoded 32+ bytes)".to_string(),
+            ));
+        }
+
+        // S9-R3-10: Warn if API key secret is still the default
+        if self.api_key.secret == default_api_key_secret() {
+            tracing::warn!(
+                "API key secret is set to the default value. Set PII_REDACTA_API_KEY_SECRET in production."
+            );
+        }
+
         // Validate database URL
         if self.database.url.is_empty() {
             return Err(ConfigError::Validation(
@@ -356,5 +423,51 @@ mod tests {
             ..Config::default()
         };
         assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_validate_api_key_secret() {
+        // Too short
+        let config = Config {
+            api_key: ApiKeyConfig {
+                secret: "short".to_string(),
+            },
+            ..Config::default()
+        };
+        assert!(config.validate().is_err());
+
+        // Empty
+        let config = Config {
+            api_key: ApiKeyConfig {
+                secret: String::new(),
+            },
+            ..Config::default()
+        };
+        assert!(config.validate().is_err());
+
+        // Valid (default secret is 52 chars, meets minimum)
+        let config = Config::default();
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_debug_redacts_secrets() {
+        let config = Config::default();
+        let debug_output = format!("{:?}", config);
+        // Secrets should be redacted in debug output
+        assert!(debug_output.contains("[redacted]"));
+        assert!(!debug_output.contains(&default_jwt_secret()));
+        assert!(!debug_output.contains(&default_api_key_secret()));
+    }
+
+    #[test]
+    fn test_database_debug_redacts_credentials() {
+        let db_config = DatabaseConfig {
+            url: "postgres://user:password@localhost/db".to_string(),
+            max_connections: 5,
+        };
+        let debug_output = format!("{:?}", db_config);
+        assert!(!debug_output.contains("password"));
+        assert!(debug_output.contains("***"));
     }
 }

@@ -33,11 +33,13 @@ pub async fn extract_api_auth(
         .await
         .map_err(AuthError::ApiKey)?;
 
-    // Get user's tier information
+    // Get user's tier information (S9-R3-02: ORDER BY + LIMIT 1)
     let subscription = sqlx::query_as::<_, (uuid::Uuid,)>(
         r#"
-        SELECT tier_id FROM subscriptions 
+        SELECT tier_id FROM subscriptions
         WHERE user_id = $1 AND status IN ('trial', 'active', 'past_due')
+        ORDER BY created_at DESC
+        LIMIT 1
         "#,
     )
     .bind(validated.user_id)
@@ -118,11 +120,13 @@ pub async fn try_extract_auth(state: &AuthState, headers: &HeaderMap) -> Option<
         Err(_) => return None,
     };
 
-    // Get user's tier information
+    // Get user's tier information (S9-R3-02: ORDER BY + LIMIT 1)
     let subscription = sqlx::query_as::<_, (uuid::Uuid,)>(
         r#"
-        SELECT tier_id FROM subscriptions 
+        SELECT tier_id FROM subscriptions
         WHERE user_id = $1 AND status IN ('trial', 'active', 'past_due')
+        ORDER BY created_at DESC
+        LIMIT 1
         "#,
     )
     .bind(validated.user_id)

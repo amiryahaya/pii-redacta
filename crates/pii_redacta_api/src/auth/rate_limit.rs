@@ -81,6 +81,11 @@ impl RateLimiter {
     }
 
     /// Check user-level rate limit (aggregate across all keys)
+    ///
+    /// Note (S9-R3-17): `requests_per_hour == 0` is treated as unlimited.
+    /// This differs from `check_key_limit` where `Some(0)` denies all requests.
+    /// The distinction is: this function takes a raw u64 (0 = no limit configured),
+    /// while `check_key_limit` takes `Option<i32>` (None = unlimited, Some(0) = blocked).
     pub async fn check_user_limit(
         &self,
         user_id: uuid::Uuid,
@@ -152,7 +157,10 @@ impl RateLimiter {
         }
     }
 
-    /// Check monthly file upload limit for a user
+    /// Check monthly file upload limit for a user (S9-R3-11: read-only check, does not increment)
+    ///
+    /// This only checks the current count against the limit.
+    /// Call `increment_file_count()` after a successful upload to track usage.
     pub async fn check_monthly_file_limit(
         &self,
         user_id: uuid::Uuid,
@@ -162,6 +170,10 @@ impl RateLimiter {
             Some(m) => m as u64,
             None => return Ok(RateLimitResult::Allowed),
         };
+
+        if max == 0 {
+            return Ok(RateLimitResult::RetryAfter(0));
+        }
 
         let mut conn = self.redis.get_multiplexed_async_connection().await?;
 
@@ -174,14 +186,10 @@ impl RateLimiter {
         let month = now / (30 * 24 * 3600);
         let key = format!("rate_limit:files:{}:{}", user_id, month);
 
-        let count: u64 = conn.incr(&key, 1).await?;
+        // Read-only: use GET instead of INCR to avoid counting failed requests
+        let count: u64 = conn.get(&key).await.unwrap_or(0);
 
-        // Expire after 35 days to be safe
-        if count == 1 {
-            let _: () = conn.expire(&key, 35 * 24 * 3600).await?;
-        }
-
-        if count > max {
+        if count >= max {
             // Calculate seconds until next month
             let next_month = (month + 1) * 30 * 24 * 3600;
             let retry_after = next_month - now;

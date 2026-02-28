@@ -232,8 +232,12 @@ pub async fn register(
     // Hash password with Argon2id
     let password_hash = hash_password(&req.password)?;
 
-    // Create user — use INSERT ... ON CONFLICT to handle race condition (S9-7)
+    // Create user + subscription in a transaction (S9-R3-06)
+    // Note (S9-R3-03): The unique constraint on email intentionally blocks reuse of
+    // soft-deleted emails. This prevents account impersonation after deletion.
     let user_id = Uuid::new_v4();
+    let mut tx = state.db.pool().begin().await?;
+
     let user = sqlx::query_as::<_, UserRow>(
         r#"
         INSERT INTO users (id, email, password_hash, display_name, company_name, created_at, updated_at)
@@ -246,7 +250,7 @@ pub async fn register(
     .bind(&password_hash)
     .bind(&req.display_name)
     .bind(&req.company_name)
-    .fetch_one(state.db.pool())
+    .fetch_one(&mut *tx)
     .await
     .map_err(|e| {
         // Handle unique violation (duplicate email) — catches race condition (S9-7)
@@ -260,7 +264,7 @@ pub async fn register(
 
     // Create trial subscription (14 days)
     let trial_tier = sqlx::query_as::<_, (Uuid,)>("SELECT id FROM tiers WHERE name = 'trial'")
-        .fetch_one(state.db.pool())
+        .fetch_one(&mut *tx)
         .await?;
 
     sqlx::query(
@@ -271,8 +275,10 @@ pub async fn register(
     )
     .bind(user_id)
     .bind(trial_tier.0)
-    .execute(state.db.pool())
+    .execute(&mut *tx)
     .await?;
+
+    tx.commit().await?;
 
     // Generate JWT token
     let token = generate_token(user.id, &user.email, user.is_admin, &state.jwt_config)?;
@@ -390,6 +396,8 @@ pub async fn change_password(
     let new_hash = hash_password(&req.new_password)?;
 
     // Update password
+    // TODO(S9-R3-05): Existing JWT tokens remain valid until expiry after password change.
+    // Consider adding a Redis-based token blacklist or password_changed_at claim.
     sqlx::query("UPDATE users SET password_hash = $1, updated_at = NOW() WHERE id = $2")
         .bind(&new_hash)
         .bind(auth_user.user_id)
@@ -423,11 +431,21 @@ pub async fn update_user(
         }
     }
 
+    // S9-R3-07: CASE expression allows clearing fields with empty string,
+    // preserving existing value when field is absent (NULL), or updating to new value.
     let user = sqlx::query_as::<_, UserRowPublic>(
         r#"
         UPDATE users
-        SET display_name = COALESCE($1, display_name),
-            company_name = COALESCE($2, company_name),
+        SET display_name = CASE
+                WHEN $1 IS NULL THEN display_name
+                WHEN $1 = '' THEN NULL
+                ELSE $1
+            END,
+            company_name = CASE
+                WHEN $2 IS NULL THEN company_name
+                WHEN $2 = '' THEN NULL
+                ELSE $2
+            END,
             updated_at = NOW()
         WHERE id = $3 AND deleted_at IS NULL
         RETURNING id, email, display_name, company_name,

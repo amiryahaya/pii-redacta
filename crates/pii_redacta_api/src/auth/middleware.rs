@@ -34,9 +34,17 @@ pub async fn api_auth_middleware(
         .await
         .map_err(AuthError::ApiKey)?;
 
-    // Check rate limit for this API key
-    let user = get_user_info(&state, validated.user_id).await?;
+    // Get user info using the validated key's ID and environment (S9-R3-04)
+    let user = get_user_info(
+        &state,
+        validated.user_id,
+        validated.api_key.id,
+        validated.environment,
+    )
+    .await?;
 
+    // Check rate limit for this API key
+    // Fail closed: if Redis is down, reject the request (S9-R3-01)
     match state
         .rate_limiter
         .check_key_limit(
@@ -50,8 +58,8 @@ pub async fn api_auth_middleware(
             return Err(AuthError::RateLimitExceeded);
         }
         Err(e) => {
-            tracing::warn!("Rate limiter error: {}", e);
-            // Continue on rate limiter error (fail open)
+            tracing::error!("API key rate limiter error (failing closed): {}", e);
+            return Err(AuthError::RateLimitExceeded);
         }
     }
 
@@ -92,6 +100,8 @@ pub async fn ip_rate_limit_middleware(
     next: Next,
 ) -> Result<Response, AuthError> {
     // Extract client IP
+    // Note (S9-R3-18): X-Forwarded-For can be spoofed by clients. In production,
+    // deploy behind a reverse proxy that overwrites this header with the real client IP.
     let ip = request
         .headers()
         .get("X-Forwarded-For")
@@ -122,10 +132,12 @@ pub async fn ip_rate_limit_middleware(
     Ok(next.run(request).await)
 }
 
-/// Get user information including tier
+/// Get user information including tier (S9-R3-04: accepts validated key ID/env from caller)
 async fn get_user_info(
     state: &AuthState,
     user_id: uuid::Uuid,
+    api_key_id: uuid::Uuid,
+    environment: pii_redacta_core::db::api_key_manager::ApiKeyEnvironment,
 ) -> Result<AuthenticatedUser, AuthError> {
     // Get user's subscription tier
     let subscription = sqlx::query_as::<_, (uuid::Uuid,)>(
@@ -142,17 +154,6 @@ async fn get_user_info(
     .map_err(|e| {
         AuthError::ApiKey(pii_redacta_core::db::api_key_manager::ApiKeyError::Database(e))
     })?;
-
-    let validated = state
-        .api_key_manager
-        .list_user_keys(user_id)
-        .await
-        .map_err(AuthError::ApiKey)?;
-
-    let api_key_id = validated
-        .first()
-        .map(|k| k.id)
-        .unwrap_or_else(uuid::Uuid::new_v4);
 
     let tier = match subscription {
         Some((tier_id,)) => state
@@ -173,7 +174,7 @@ async fn get_user_info(
     Ok(AuthenticatedUser {
         user_id,
         api_key_id,
-        environment: pii_redacta_core::db::api_key_manager::ApiKeyEnvironment::Live,
+        environment,
         tier_name: tier.name,
         tier_limits: tier.limits.0,
         tier_features: tier.features.0,

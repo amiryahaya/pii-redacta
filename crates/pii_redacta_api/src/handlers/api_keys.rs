@@ -38,7 +38,8 @@ pub struct ApiKeyResponse {
 }
 
 /// Generated API key response (includes full key - shown once)
-#[derive(Debug, Serialize)]
+/// Note: Debug intentionally not derived to prevent full_key from appearing in logs (S9-R3-08)
+#[derive(Serialize)]
 pub struct CreateApiKeyResponse {
     pub id: String,
     pub name: String,
@@ -111,6 +112,7 @@ impl IntoResponse for ApiKeyHandlerError {
 }
 
 /// List all API keys for the authenticated user
+// TODO(S9-R3-16): Add pagination (limit/offset) for users with many keys
 pub async fn list_api_keys(
     State(state): State<AppState>,
     Extension(auth_user): Extension<AuthUser>,

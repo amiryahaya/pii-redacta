@@ -371,7 +371,7 @@ impl ApiKeyManager {
         key.ok_or(ApiKeyError::NotFound)
     }
 
-    /// Get a single API key by ID (for a specific user)
+    /// Get a single active API key by ID (for a specific user) (S9-R3-13)
     pub async fn get_key(&self, key_id: Uuid, user_id: Uuid) -> Result<ApiKey> {
         let key = sqlx::query_as::<_, ApiKey>(
             r#"
@@ -379,8 +379,8 @@ impl ApiKeyManager {
                 id, user_id, key_prefix, key_hash, name,
                 last_used_at, expires_at, is_active, revoked_at,
                 revoked_reason, created_at, environment
-            FROM api_keys 
-            WHERE id = $1 AND user_id = $2
+            FROM api_keys
+            WHERE id = $1 AND user_id = $2 AND is_active = true
             "#,
         )
         .bind(key_id)
