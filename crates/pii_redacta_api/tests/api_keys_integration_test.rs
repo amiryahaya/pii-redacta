@@ -107,7 +107,14 @@ async fn test_list_api_keys_authenticated() {
     assert_eq!(response.status(), StatusCode::OK);
 
     let body = parse_json_response(response).await;
-    assert!(body.is_array(), "Expected array of API keys");
+    assert!(
+        body.get("data").is_some(),
+        "Expected paginated response with 'data' field"
+    );
+    assert!(body["data"].is_array(), "Expected 'data' to be an array");
+    assert!(body.get("total").is_some(), "Expected 'total' field");
+    assert!(body.get("limit").is_some(), "Expected 'limit' field");
+    assert!(body.get("offset").is_some(), "Expected 'offset' field");
 
     fixtures::cleanup_test_data(&db, &[user_id]).await;
 }
@@ -170,7 +177,7 @@ async fn test_delete_api_key_authenticated() {
     assert_eq!(list_response.status(), StatusCode::OK);
 
     let keys = parse_json_response(list_response).await;
-    let active_keys: Vec<&Value> = keys
+    let active_keys: Vec<&Value> = keys["data"]
         .as_array()
         .unwrap()
         .iter()

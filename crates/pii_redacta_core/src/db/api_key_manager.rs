@@ -330,6 +330,44 @@ impl ApiKeyManager {
         Ok(keys)
     }
 
+    /// List API keys for a user with pagination
+    pub async fn list_user_keys_paginated(
+        &self,
+        user_id: Uuid,
+        limit: i64,
+        offset: i64,
+    ) -> Result<(Vec<ApiKey>, i64)> {
+        let total = sqlx::query_scalar::<_, i64>(
+            r#"
+            SELECT COUNT(*) FROM api_keys
+            WHERE user_id = $1 AND is_active = true
+            "#,
+        )
+        .bind(user_id)
+        .fetch_one(self.db.pool())
+        .await?;
+
+        let keys = sqlx::query_as::<_, ApiKey>(
+            r#"
+            SELECT
+                id, user_id, key_prefix, key_hash, name,
+                last_used_at, expires_at, is_active, revoked_at,
+                revoked_reason, created_at, environment
+            FROM api_keys
+            WHERE user_id = $1 AND is_active = true
+            ORDER BY created_at DESC
+            LIMIT $2 OFFSET $3
+            "#,
+        )
+        .bind(user_id)
+        .bind(limit)
+        .bind(offset)
+        .fetch_all(self.db.pool())
+        .await?;
+
+        Ok((keys, total))
+    }
+
     /// Count active API keys for a user
     pub async fn count_user_keys(&self, user_id: Uuid) -> Result<i64> {
         let count = sqlx::query_scalar::<_, i64>(

@@ -5,7 +5,7 @@
 use crate::extractors::AuthUser;
 use crate::AppState;
 use axum::{
-    extract::{Extension, Path, State},
+    extract::{Extension, Path, Query, State},
     http::StatusCode,
     response::IntoResponse,
     Json,
@@ -23,6 +23,17 @@ const MIN_EXPIRES_DAYS: i32 = 1;
 const MAX_KEY_NAME_LENGTH: usize = 100;
 /// Maximum revocation reason length
 const MAX_REVOKE_REASON_LENGTH: usize = 500;
+/// Default page size for pagination
+const DEFAULT_PAGE_LIMIT: i64 = 20;
+/// Maximum page size for pagination
+const MAX_PAGE_LIMIT: i64 = 100;
+
+/// Pagination query parameters
+#[derive(Debug, Deserialize)]
+pub struct PaginationParams {
+    pub limit: Option<i64>,
+    pub offset: Option<i64>,
+}
 
 /// API Key response for portal (without sensitive data)
 #[derive(Debug, Serialize)]
@@ -36,6 +47,16 @@ pub struct ApiKeyResponse {
     pub expires_at: Option<String>,
     pub is_active: bool,
     pub created_at: String,
+}
+
+/// Paginated API keys response
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PaginatedApiKeysResponse {
+    pub data: Vec<ApiKeyResponse>,
+    pub total: i64,
+    pub limit: i64,
+    pub offset: i64,
 }
 
 /// Generated API key response (includes full key - shown once)
@@ -113,17 +134,25 @@ impl IntoResponse for ApiKeyHandlerError {
     }
 }
 
-/// List all API keys for the authenticated user
-// TODO(S9-R3-16): Add pagination (limit/offset) for users with many keys
+/// List all API keys for the authenticated user with pagination
 pub async fn list_api_keys(
     State(state): State<AppState>,
     Extension(auth_user): Extension<AuthUser>,
-) -> Result<Json<Vec<ApiKeyResponse>>, ApiKeyHandlerError> {
+    Query(params): Query<PaginationParams>,
+) -> Result<Json<PaginatedApiKeysResponse>, ApiKeyHandlerError> {
+    let limit = params
+        .limit
+        .unwrap_or(DEFAULT_PAGE_LIMIT)
+        .clamp(1, MAX_PAGE_LIMIT);
+    let offset = params.offset.unwrap_or(0).max(0);
+
     let api_key_manager = ApiKeyManager::new(state.db.clone(), &state.api_key_secret)?;
 
-    let keys = api_key_manager.list_user_keys(auth_user.user_id).await?;
+    let (keys, total) = api_key_manager
+        .list_user_keys_paginated(auth_user.user_id, limit, offset)
+        .await?;
 
-    let responses: Vec<ApiKeyResponse> = keys
+    let data: Vec<ApiKeyResponse> = keys
         .into_iter()
         .map(|key| ApiKeyResponse {
             id: key.id.to_string(),
@@ -137,7 +166,12 @@ pub async fn list_api_keys(
         })
         .collect();
 
-    Ok(Json(responses))
+    Ok(Json(PaginatedApiKeysResponse {
+        data,
+        total,
+        limit,
+        offset,
+    }))
 }
 
 /// Create a new API key
@@ -319,5 +353,11 @@ mod tests {
     fn test_revoke_reason_length_limit() {
         const _: () = assert!(MAX_REVOKE_REASON_LENGTH > 0);
         const _: () = assert!(MAX_REVOKE_REASON_LENGTH <= 1000);
+    }
+
+    #[test]
+    fn test_pagination_defaults() {
+        const _: () = assert!(DEFAULT_PAGE_LIMIT > 0);
+        const _: () = assert!(MAX_PAGE_LIMIT >= DEFAULT_PAGE_LIMIT);
     }
 }

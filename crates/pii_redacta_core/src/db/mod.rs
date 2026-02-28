@@ -7,6 +7,7 @@
 
 pub mod api_key_manager;
 pub mod models;
+pub mod redis;
 pub mod tier_manager;
 pub mod usage;
 

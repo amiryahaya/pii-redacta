@@ -43,17 +43,36 @@ pub async fn setup_db() -> Arc<Database> {
     Arc::new(db)
 }
 
-/// Create a test app with authentication
+/// Create a test app with authentication (no Redis in tests)
 pub async fn setup_app() -> Router {
     let db = setup_db().await;
-    create_app_with_auth(db, &test_jwt_secret(), &test_server_secret(), None)
-        .expect("Failed to create test app")
+    let (router, _state) =
+        create_app_with_auth(db, &test_jwt_secret(), &test_server_secret(), None, None)
+            .await
+            .expect("Failed to create test app");
+    router
 }
 
 /// Create a test app with specific CORS origins
 pub async fn setup_app_with_cors(origins: Vec<String>) -> Router {
     let db = setup_db().await;
-    create_app_with_auth(db, &test_jwt_secret(), &test_server_secret(), Some(origins))
+    let (router, _state) = create_app_with_auth(
+        db,
+        &test_jwt_secret(),
+        &test_server_secret(),
+        Some(origins),
+        None,
+    )
+    .await
+    .expect("Failed to create test app");
+    router
+}
+
+/// Create a test app and return both the router and state (for accessing job_queue, metrics, etc.)
+pub async fn setup_app_with_state() -> (Router, pii_redacta_api::AppState) {
+    let db = setup_db().await;
+    create_app_with_auth(db, &test_jwt_secret(), &test_server_secret(), None, None)
+        .await
         .expect("Failed to create test app")
 }
 

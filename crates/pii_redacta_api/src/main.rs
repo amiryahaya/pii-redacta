@@ -2,7 +2,7 @@
 //!
 //! REST API for PII detection and redaction.
 
-use pii_redacta_api::{config::Config, create_app_with_auth, init_tracing};
+use pii_redacta_api::{config::Config, create_app_with_auth, init_tracing, jobs::JobProcessor};
 use std::sync::Arc;
 use tracing::{error, info, warn};
 
@@ -62,18 +62,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Create application router
-    let app = match create_app_with_auth(
+    let (app, state) = match create_app_with_auth(
         db.clone(),
         &config.jwt.secret,
         &config.api_key.secret,
         Some(config.cors_origins()),
-    ) {
-        Ok(router) => router,
+        Some(&config.redis.url),
+    )
+    .await
+    {
+        Ok(result) => result,
         Err(e) => {
             error!(error = %e, "Failed to create application router");
             return Err(e.into());
         }
     };
+
+    // Spawn background job processor
+    let _processor_handle =
+        JobProcessor::new(state.job_queue.clone(), Some(state.metrics.clone())).start();
+    info!("Background job processor spawned");
 
     // Bind to address
     let addr = config.server_addr()?;

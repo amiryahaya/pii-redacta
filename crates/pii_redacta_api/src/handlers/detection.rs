@@ -145,6 +145,12 @@ pub async fn detect_authenticated(
     };
 
     let detections_count = entities.len() as i32;
+
+    // Record metrics
+    state
+        .metrics
+        .record_detection(detections_count as u64, processing_time_ms);
+
     let response = DetectResponse {
         entities,
         processing_time_ms,

@@ -21,7 +21,7 @@ pub struct HealthResponse {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct DependenciesStatus {
     pub database: DependencyHealth,
-    pub redis: Option<DependencyHealth>, // Optional for now
+    pub redis: Option<DependencyHealth>,
 }
 
 /// Single dependency health
@@ -57,7 +57,13 @@ pub async fn health_deep(State(state): State<AppState>) -> (StatusCode, Json<Hea
     // Check database connectivity
     let db_health = check_database(&state).await;
 
-    let all_healthy = db_health.status == "healthy";
+    // Check Redis connectivity (if configured)
+    let redis_health = check_redis(&state).await;
+
+    let all_healthy = db_health.status == "healthy"
+        && redis_health
+            .as_ref()
+            .map_or(true, |r| r.status == "healthy");
 
     let response = HealthResponse {
         status: if all_healthy {
@@ -69,7 +75,7 @@ pub async fn health_deep(State(state): State<AppState>) -> (StatusCode, Json<Hea
         timestamp: chrono::Utc::now().to_rfc3339(),
         dependencies: Some(DependenciesStatus {
             database: db_health,
-            redis: None, // TODO: Add Redis health check when integrated
+            redis: redis_health,
         }),
     };
 
@@ -104,6 +110,28 @@ async fn check_database(state: &AppState) -> DependencyHealth {
                 latency_ms: Some(start.elapsed().as_millis() as u64),
                 error: Some(e.to_string()),
             }
+        }
+    }
+}
+
+/// Check Redis connectivity
+async fn check_redis(state: &AppState) -> Option<DependencyHealth> {
+    let redis = state.redis.as_ref()?;
+    let start = std::time::Instant::now();
+
+    match redis.health_check().await {
+        Ok(()) => Some(DependencyHealth {
+            status: "healthy".to_string(),
+            latency_ms: Some(start.elapsed().as_millis() as u64),
+            error: None,
+        }),
+        Err(e) => {
+            tracing::error!(error = %e, "Redis health check failed");
+            Some(DependencyHealth {
+                status: "unhealthy".to_string(),
+                latency_ms: Some(start.elapsed().as_millis() as u64),
+                error: Some(e.to_string()),
+            })
         }
     }
 }
