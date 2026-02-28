@@ -1,6 +1,5 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
-import * as Sentry from '@sentry/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { BrowserRouter } from 'react-router-dom'
 import App from './App'
@@ -9,11 +8,14 @@ import './index.css'
 
 const SENTRY_DSN = import.meta.env.VITE_SENTRY_DSN
 
+// Load Sentry lazily to avoid bundling ~200kB when DSN is not configured (M8)
 if (SENTRY_DSN) {
-  Sentry.init({
-    dsn: SENTRY_DSN,
-    environment: import.meta.env.MODE,
-    tracesSampleRate: 0.1,
+  import('@sentry/react').then((Sentry) => {
+    Sentry.init({
+      dsn: SENTRY_DSN,
+      environment: import.meta.env.MODE,
+      release: import.meta.env.VITE_APP_VERSION || 'dev',
+    })
   })
 }
 

@@ -363,17 +363,25 @@ mod tests {
 
     #[test]
     fn test_environment_parsing() {
-        // Valid environments
-        assert!(matches!("live".parse::<String>().as_deref(), Ok("live")));
-        assert!(matches!("test".parse::<String>().as_deref(), Ok("test")));
+        // Test the same match logic used in create_api_key handler (line ~198)
+        fn parse_env(s: &str) -> Option<ApiKeyEnvironment> {
+            match s {
+                "live" => Some(ApiKeyEnvironment::Live),
+                "test" => Some(ApiKeyEnvironment::Test),
+                _ => None,
+            }
+        }
 
-        // Simulate the handler's match logic
-        let valid_envs = |s: &str| -> bool { matches!(s, "live" | "test") };
-        assert!(valid_envs("live"));
-        assert!(valid_envs("test"));
-        assert!(!valid_envs("staging"));
-        assert!(!valid_envs("production"));
-        assert!(!valid_envs(""));
+        // Valid environments
+        assert!(matches!(parse_env("live"), Some(ApiKeyEnvironment::Live)));
+        assert!(matches!(parse_env("test"), Some(ApiKeyEnvironment::Test)));
+
+        // Invalid environments should return None
+        assert!(parse_env("staging").is_none());
+        assert!(parse_env("production").is_none());
+        assert!(parse_env("").is_none());
+        assert!(parse_env("LIVE").is_none()); // case-sensitive
+        assert!(parse_env("TEST").is_none());
     }
 
     #[test]

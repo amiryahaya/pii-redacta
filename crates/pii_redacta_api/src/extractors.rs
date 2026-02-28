@@ -10,7 +10,10 @@ pub struct AuthUser {
     pub is_admin: bool,
 }
 
-/// Admin user extracted after server-side admin verification (S12-2a)
+/// Admin user extracted after server-side admin verification (S12-2a).
+///
+/// Available in request extensions after `admin_auth_middleware` runs.
+/// Handlers behind the admin middleware can extract this via `Extension<AdminUser>`.
 #[derive(Debug, Clone)]
 pub struct AdminUser {
     pub user_id: Uuid,

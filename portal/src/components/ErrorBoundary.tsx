@@ -1,5 +1,4 @@
 import { Component, ErrorInfo, ReactNode } from 'react'
-import * as Sentry from '@sentry/react'
 import { AlertTriangle, RefreshCw } from 'lucide-react'
 
 interface Props {
@@ -21,7 +20,14 @@ export class ErrorBoundary extends Component<Props, State> {
 
   componentDidCatch(error: Error, errorInfo: ErrorInfo) {
     console.error('ErrorBoundary caught:', error, errorInfo)
-    Sentry.captureException(error, { extra: { componentStack: errorInfo.componentStack } })
+    // Dynamically import Sentry to avoid bundling when DSN is not configured
+    import('@sentry/react')
+      .then((Sentry) => {
+        Sentry.captureException(error, { extra: { componentStack: errorInfo.componentStack } })
+      })
+      .catch(() => {
+        // Sentry not available — already logged to console above
+      })
   }
 
   handleReset = () => {
@@ -46,7 +52,7 @@ export class ErrorBoundary extends Component<Props, State> {
             <p className="text-gray-600 mb-6">
               We apologize for the inconvenience. Please try refreshing the page or contact support if the problem persists.
             </p>
-            {this.state.error && (
+            {this.state.error && import.meta.env.DEV && (
               <details className="mb-6 text-left">
                 <summary className="text-sm text-gray-500 cursor-pointer">
                   Error details

@@ -2,7 +2,9 @@
 //!
 //! REST API for PII detection and redaction.
 
-use pii_redacta_api::{config::Config, create_app_with_auth, init_tracing, jobs::JobProcessor};
+use pii_redacta_api::{
+    config::Config, create_app_with_auth_opts, init_tracing, jobs::JobProcessor,
+};
 use std::sync::Arc;
 use tracing::{error, info, warn};
 
@@ -61,13 +63,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
+    // Parse trusted proxy IPs from config (S12-3)
+    let trusted_proxies = config.server.parse_trusted_proxies();
+    if !trusted_proxies.is_empty() {
+        info!(count = trusted_proxies.len(), "Trusted proxies configured");
+    }
+
     // Create application router
-    let (app, state) = match create_app_with_auth(
+    let (app, state) = match create_app_with_auth_opts(
         db.clone(),
         &config.jwt.secret,
         &config.api_key.secret,
         Some(config.cors_origins()),
         Some(&config.redis.url),
+        &trusted_proxies,
     )
     .await
     {

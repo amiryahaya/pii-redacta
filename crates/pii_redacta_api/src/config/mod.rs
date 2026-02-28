@@ -540,6 +540,39 @@ mod tests {
         assert_eq!(proxies.len(), 2);
     }
 
+    /// L9: Invalid IPs are skipped with a warning
+    #[test]
+    fn test_config_parses_trusted_proxies_invalid_entries() {
+        let config = ServerConfig {
+            trusted_proxies: "10.0.0.1,not-an-ip,192.168.1.1".to_string(),
+            ..Default::default()
+        };
+        let proxies = config.parse_trusted_proxies();
+        // Invalid entry is skipped, only 2 valid IPs
+        assert_eq!(proxies.len(), 2);
+        assert_eq!(proxies[0], "10.0.0.1".parse::<std::net::IpAddr>().unwrap());
+        assert_eq!(
+            proxies[1],
+            "192.168.1.1".parse::<std::net::IpAddr>().unwrap()
+        );
+    }
+
+    /// L7: IPv6 in trusted proxies
+    #[test]
+    fn test_config_parses_trusted_proxies_ipv6() {
+        let config = ServerConfig {
+            trusted_proxies: "::1,2001:db8::1".to_string(),
+            ..Default::default()
+        };
+        let proxies = config.parse_trusted_proxies();
+        assert_eq!(proxies.len(), 2);
+        assert_eq!(proxies[0], "::1".parse::<std::net::IpAddr>().unwrap());
+        assert_eq!(
+            proxies[1],
+            "2001:db8::1".parse::<std::net::IpAddr>().unwrap()
+        );
+    }
+
     #[test]
     fn test_database_debug_redacts_credentials() {
         let db_config = DatabaseConfig {

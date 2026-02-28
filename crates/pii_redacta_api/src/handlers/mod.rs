@@ -28,24 +28,43 @@ pub struct AdminStatsResponse {
 /// Protected by admin middleware (S12-2c).
 pub async fn admin_stats(
     State(state): State<crate::AppState>,
-) -> Result<Json<AdminStatsResponse>, axum::http::StatusCode> {
+) -> Result<Json<AdminStatsResponse>, axum::response::Response> {
     let total_users =
         sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM users WHERE deleted_at IS NULL")
             .fetch_one(state.db.pool())
             .await
-            .map_err(|_| axum::http::StatusCode::INTERNAL_SERVER_ERROR)?;
+            .map_err(|e| {
+                tracing::error!(error = %e, "admin_stats: failed to count users");
+                admin_error_response()
+            })?;
 
     let total_api_keys =
         sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM api_keys WHERE is_active = true")
             .fetch_one(state.db.pool())
             .await
-            .map_err(|_| axum::http::StatusCode::INTERNAL_SERVER_ERROR)?;
+            .map_err(|e| {
+                tracing::error!(error = %e, "admin_stats: failed to count api_keys");
+                admin_error_response()
+            })?;
 
     Ok(Json(AdminStatsResponse {
         total_users,
         total_api_keys,
     }))
 }
+
+/// Build a consistent JSON error response for admin endpoints (L4).
+fn admin_error_response() -> axum::response::Response {
+    let body = serde_json::json!({
+        "error": {
+            "code": 500,
+            "message": "An unexpected error occurred",
+        }
+    });
+    (axum::http::StatusCode::INTERNAL_SERVER_ERROR, Json(body)).into_response()
+}
+
+use axum::response::IntoResponse;
 
 /// Job status
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

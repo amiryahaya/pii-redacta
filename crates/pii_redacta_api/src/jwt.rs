@@ -58,6 +58,11 @@ impl JwtConfig {
     pub fn secret(&self) -> &str {
         &self.secret
     }
+
+    /// Get token expiration time in hours
+    pub fn expiration_hours(&self) -> i64 {
+        self.expiration_hours
+    }
 }
 
 /// JWT error types

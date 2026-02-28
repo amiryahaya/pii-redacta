@@ -36,21 +36,22 @@ pub async fn admin_auth_middleware(
 
     let user_id = auth_user.user_id;
 
-    // Check Redis cache first
+    // Check Redis cache first (only positive results are cached — M5)
     let is_admin = if let Some(ref redis) = state.redis {
         let cache_key = format!("admin:{}", user_id);
         match redis.get_i64(&cache_key).await {
-            Ok(Some(cached)) => cached == 1,
+            Ok(Some(1)) => true,
             _ => {
-                // Cache miss or error — query DB
+                // Cache miss, negative, or error — query DB
                 let db_admin = check_admin_in_db(&state, user_id).await;
-                // Cache the result for 60 seconds
-                let value = if db_admin { 1i64 } else { 0i64 };
-                let redis = redis.clone();
-                let cache_key_owned = cache_key;
-                tokio::spawn(async move {
-                    let _ = redis.set_with_expiry(&cache_key_owned, value, 60).await;
-                });
+                // Only cache positive admin status to avoid stale denial after promotion
+                if db_admin {
+                    let redis = redis.clone();
+                    let cache_key_owned = cache_key;
+                    tokio::spawn(async move {
+                        let _ = redis.set_with_expiry(&cache_key_owned, 1i64, 60).await;
+                    });
+                }
                 db_admin
             }
         }

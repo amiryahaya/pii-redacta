@@ -105,6 +105,18 @@ pub async fn create_app_with_auth(
     cors_origins: Option<Vec<String>>,
     redis_url: Option<&str>,
 ) -> Result<(Router, AppState), jwt::JwtError> {
+    create_app_with_auth_opts(db, jwt_secret, api_key_secret, cors_origins, redis_url, &[]).await
+}
+
+/// Create router with portal auth endpoints (with trusted proxy configuration)
+pub async fn create_app_with_auth_opts(
+    db: Arc<pii_redacta_core::db::Database>,
+    jwt_secret: &str,
+    api_key_secret: &str,
+    cors_origins: Option<Vec<String>>,
+    redis_url: Option<&str>,
+    trusted_proxies: &[std::net::IpAddr],
+) -> Result<(Router, AppState), jwt::JwtError> {
     let jwt_config = JwtConfig::new(jwt_secret, 24)?;
     let rate_limiter = Arc::new(middleware::rate_limit::InMemoryRateLimiter::new());
     let job_queue = Arc::new(JobQueue::new());
@@ -133,7 +145,7 @@ pub async fn create_app_with_auth(
         job_queue,
         metrics,
         redis,
-        trusted_proxies: Vec::new(),
+        trusted_proxies: trusted_proxies.to_vec(),
     };
 
     // Protected routes — require valid JWT token
@@ -399,10 +411,8 @@ pub fn extract_client_ip_from_xff(
             if !trusted_proxies.contains(&ip) {
                 return Some(ip.to_string());
             }
-        } else {
-            // Non-parseable IP — treat as client IP (defence in depth)
-            return Some(ip_str.to_string());
         }
+        // Non-parseable entries are skipped — prevents rate-limit bypass via garbage XFF values
     }
     None
 }
@@ -495,5 +505,64 @@ mod xff_tests {
 
         let ip = extract_client_ip_from_xff(&headers, &trusted);
         assert_eq!(ip, None);
+    }
+
+    /// L7: IPv6 addresses in XFF and trusted proxies
+    #[test]
+    fn test_xff_ipv6_support() {
+        let trusted: Vec<std::net::IpAddr> = vec!["::1".parse().unwrap()];
+        let mut headers = HeaderMap::new();
+        headers.insert("x-forwarded-for", "2001:db8::1, ::1".parse().unwrap());
+
+        let ip = extract_client_ip_from_xff(&headers, &trusted);
+        assert_eq!(ip, Some("2001:db8::1".to_string()));
+    }
+
+    /// L7: IPv6 only chain
+    #[test]
+    fn test_xff_ipv6_all_trusted() {
+        let trusted: Vec<std::net::IpAddr> = vec!["::1".parse().unwrap(), "::2".parse().unwrap()];
+        let mut headers = HeaderMap::new();
+        headers.insert("x-forwarded-for", "::1, ::2".parse().unwrap());
+
+        let ip = extract_client_ip_from_xff(&headers, &trusted);
+        assert_eq!(ip, None);
+    }
+
+    /// L8: Malformed/empty XFF header
+    #[test]
+    fn test_xff_malformed_entries_skipped() {
+        let trusted: Vec<std::net::IpAddr> = vec![];
+        let mut headers = HeaderMap::new();
+        // Non-parseable entries should be skipped (M3 fix)
+        headers.insert("x-forwarded-for", "garbage, not-an-ip".parse().unwrap());
+
+        let ip = extract_client_ip_from_xff(&headers, &trusted);
+        assert_eq!(ip, None, "Non-parseable XFF entries should be skipped");
+    }
+
+    #[test]
+    fn test_xff_empty_value() {
+        let trusted: Vec<std::net::IpAddr> = vec![];
+        let mut headers = HeaderMap::new();
+        headers.insert("x-forwarded-for", "".parse().unwrap());
+
+        let ip = extract_client_ip_from_xff(&headers, &trusted);
+        assert_eq!(ip, None);
+    }
+
+    /// L8: Mixed valid and invalid entries
+    #[test]
+    fn test_xff_mixed_valid_invalid() {
+        let trusted: Vec<std::net::IpAddr> = vec!["10.0.0.1".parse().unwrap()];
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "x-forwarded-for",
+            "1.2.3.4, garbage, 10.0.0.1".parse().unwrap(),
+        );
+
+        // Right-to-left: skip 10.0.0.1 (trusted), skip "garbage" (non-parseable), return 1.2.3.4
+        let ip = extract_client_ip_from_xff(&headers, &trusted);
+        assert_eq!(ip, Some("1.2.3.4".to_string()));
     }
 }

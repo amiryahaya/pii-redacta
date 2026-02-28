@@ -7,14 +7,12 @@ import { DashboardPage } from './pages/DashboardPage'
 import { ApiKeysPage } from './pages/ApiKeysPage'
 import { UsagePage } from './pages/UsagePage'
 import { SettingsPage } from './pages/SettingsPage'
-import { ErrorBoundary } from './components/ErrorBoundary'
 import { ToastProvider } from './hooks/useToast'
 
 function App() {
   const { isAuthenticated } = useAuthStore()
 
   return (
-    <ErrorBoundary>
       <ToastProvider>
         <Routes>
           {/* Public routes */}
@@ -43,7 +41,6 @@ function App() {
           <Route path="*" element={<Navigate to="/" />} />
         </Routes>
       </ToastProvider>
-    </ErrorBoundary>
   )
 }
 

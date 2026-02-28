@@ -921,3 +921,280 @@ async fn test_change_password_wrong_current() {
         .execute(db.pool())
         .await;
 }
+
+// ============================================================================
+// Token Invalidation After Password Change Tests (H1)
+// ============================================================================
+
+/// H1: Old token should be rejected after password change (without Redis, uses DB fallback)
+#[tokio::test]
+async fn test_old_token_rejected_after_password_change() {
+    let app = setup_app().await;
+    let db = setup_db().await;
+
+    let email = format!("test-token-inv-{:.8}@example.com", uuid::Uuid::new_v4());
+    let password = "Original123!";
+
+    // Register user
+    let register_request = Request::builder()
+        .uri("/api/v1/auth/register")
+        .method("POST")
+        .header("Content-Type", "application/json")
+        .body(Body::from(
+            json!({
+                "email": &email,
+                "password": password
+            })
+            .to_string(),
+        ))
+        .unwrap();
+
+    let register_response = app.clone().oneshot(register_request).await.unwrap();
+    assert_eq!(register_response.status(), StatusCode::OK);
+
+    let register_body = parse_json_response(register_response).await;
+    let old_token = register_body["token"].as_str().unwrap().to_string();
+
+    // Small delay to ensure password_changed_at is strictly after token iat
+    tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
+
+    // Change password using the old token
+    let change_request = Request::builder()
+        .uri("/api/v1/auth/change-password")
+        .method("POST")
+        .header("Content-Type", "application/json")
+        .header("Authorization", format!("Bearer {}", old_token))
+        .body(Body::from(
+            json!({
+                "currentPassword": password,
+                "newPassword": "NewSecure456!"
+            })
+            .to_string(),
+        ))
+        .unwrap();
+
+    let change_response = app.clone().oneshot(change_request).await.unwrap();
+    assert_eq!(change_response.status(), StatusCode::NO_CONTENT);
+
+    // Old token should now be rejected
+    let me_request = Request::builder()
+        .uri("/api/v1/auth/me")
+        .method("GET")
+        .header("Authorization", format!("Bearer {}", old_token))
+        .body(Body::empty())
+        .unwrap();
+
+    let me_response = app.clone().oneshot(me_request).await.unwrap();
+    assert_eq!(
+        me_response.status(),
+        StatusCode::UNAUTHORIZED,
+        "Old token should be rejected after password change"
+    );
+
+    // Clean up
+    let _ = sqlx::query("DELETE FROM users WHERE email = $1")
+        .bind(&email)
+        .execute(db.pool())
+        .await;
+}
+
+/// H1: New token obtained after password change should work
+#[tokio::test]
+async fn test_new_token_works_after_password_change() {
+    let app = setup_app().await;
+    let db = setup_db().await;
+
+    let email = format!("test-new-token-{:.8}@example.com", uuid::Uuid::new_v4());
+    let password = "Original123!";
+    let new_password = "NewSecure456!";
+
+    // Register
+    let register_request = Request::builder()
+        .uri("/api/v1/auth/register")
+        .method("POST")
+        .header("Content-Type", "application/json")
+        .body(Body::from(
+            json!({ "email": &email, "password": password }).to_string(),
+        ))
+        .unwrap();
+
+    let register_response = app.clone().oneshot(register_request).await.unwrap();
+    assert_eq!(register_response.status(), StatusCode::OK);
+    let register_body = parse_json_response(register_response).await;
+    let old_token = register_body["token"].as_str().unwrap().to_string();
+
+    // Small delay
+    tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
+
+    // Change password
+    let change_request = Request::builder()
+        .uri("/api/v1/auth/change-password")
+        .method("POST")
+        .header("Content-Type", "application/json")
+        .header("Authorization", format!("Bearer {}", old_token))
+        .body(Body::from(
+            json!({ "currentPassword": password, "newPassword": new_password }).to_string(),
+        ))
+        .unwrap();
+
+    let change_response = app.clone().oneshot(change_request).await.unwrap();
+    assert_eq!(change_response.status(), StatusCode::NO_CONTENT);
+
+    // Wait so that new token's iat (unix seconds) is strictly after password_changed_at.
+    // JWT iat has second-level precision, so tokens issued in the same second as the
+    // password change are intentionally rejected (H5 same-second race fix).
+    tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
+
+    // Login with new password to get new token
+    let login_request = Request::builder()
+        .uri("/api/v1/auth/login")
+        .method("POST")
+        .header("Content-Type", "application/json")
+        .body(Body::from(
+            json!({ "email": &email, "password": new_password }).to_string(),
+        ))
+        .unwrap();
+
+    let login_response = app.clone().oneshot(login_request).await.unwrap();
+    assert_eq!(login_response.status(), StatusCode::OK);
+    let login_body = parse_json_response(login_response).await;
+    let new_token = login_body["token"].as_str().unwrap().to_string();
+
+    // New token should work
+    let me_request = Request::builder()
+        .uri("/api/v1/auth/me")
+        .method("GET")
+        .header("Authorization", format!("Bearer {}", new_token))
+        .body(Body::empty())
+        .unwrap();
+
+    let me_response = app.clone().oneshot(me_request).await.unwrap();
+    assert_eq!(
+        me_response.status(),
+        StatusCode::OK,
+        "New token should be accepted after password change"
+    );
+
+    // Clean up
+    let _ = sqlx::query("DELETE FROM users WHERE email = $1")
+        .bind(&email)
+        .execute(db.pool())
+        .await;
+}
+
+/// H1: Verify password_changed_at column exists
+#[tokio::test]
+async fn test_password_changed_at_column_exists() {
+    let db = setup_db().await;
+
+    let result = sqlx::query_scalar::<_, bool>(
+        r#"
+        SELECT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_name = 'users' AND column_name = 'password_changed_at'
+        )
+        "#,
+    )
+    .fetch_one(db.pool())
+    .await
+    .expect("Query should succeed");
+
+    assert!(
+        result,
+        "password_changed_at column should exist in users table"
+    );
+}
+
+// ============================================================================
+// Admin Middleware Tests (H2)
+// ============================================================================
+
+/// H2: Non-admin users should be rejected from admin routes
+#[tokio::test]
+async fn test_non_admin_rejected_from_admin_route() {
+    let app = setup_app().await;
+    let db = setup_db().await;
+
+    let email = format!("test-nonadmin-{:.8}@example.com", uuid::Uuid::new_v4());
+    let tier_name = format!("test-tier-{:.8}", uuid::Uuid::new_v4());
+    let (user_id, _, _) = fixtures::create_user_with_subscription(&db, &email, &tier_name)
+        .await
+        .expect("Failed to create user");
+
+    let token = get_auth_token(user_id, &email).await;
+
+    let request = Request::builder()
+        .uri("/api/v1/admin/stats")
+        .method("GET")
+        .header("Authorization", format!("Bearer {}", token))
+        .body(Body::empty())
+        .unwrap();
+
+    let response = app.oneshot(request).await.unwrap();
+    assert_eq!(
+        response.status(),
+        StatusCode::FORBIDDEN,
+        "Non-admin should be rejected from admin routes"
+    );
+
+    fixtures::cleanup_test_data(&db, &[user_id]).await;
+}
+
+/// H2: Admin users should access admin routes
+#[tokio::test]
+async fn test_admin_user_accesses_admin_route() {
+    let app = setup_app().await;
+    let db = setup_db().await;
+
+    let email = format!("test-admin-{:.8}@example.com", uuid::Uuid::new_v4());
+    let tier_name = format!("test-tier-{:.8}", uuid::Uuid::new_v4());
+    let (user_id, _, _) = fixtures::create_user_with_subscription(&db, &email, &tier_name)
+        .await
+        .expect("Failed to create user");
+
+    // Promote to admin
+    sqlx::query("UPDATE users SET is_admin = true WHERE id = $1")
+        .bind(user_id)
+        .execute(db.pool())
+        .await
+        .expect("Failed to promote user to admin");
+
+    // Generate admin token
+    let config = JwtConfig::new(test_jwt_secret(), 24).expect("Valid JWT config");
+    let token = generate_token(user_id, &email, true, &config).expect("Should generate token");
+
+    let request = Request::builder()
+        .uri("/api/v1/admin/stats")
+        .method("GET")
+        .header("Authorization", format!("Bearer {}", token))
+        .body(Body::empty())
+        .unwrap();
+
+    let response = app.oneshot(request).await.unwrap();
+    assert_eq!(
+        response.status(),
+        StatusCode::OK,
+        "Admin should access admin routes"
+    );
+
+    let body = parse_json_response(response).await;
+    assert!(body.get("totalUsers").is_some());
+    assert!(body.get("totalApiKeys").is_some());
+
+    fixtures::cleanup_test_data(&db, &[user_id]).await;
+}
+
+/// H2: Unauthenticated requests should be rejected from admin routes
+#[tokio::test]
+async fn test_admin_route_requires_auth() {
+    let app = setup_app().await;
+
+    let request = Request::builder()
+        .uri("/api/v1/admin/stats")
+        .method("GET")
+        .body(Body::empty())
+        .unwrap();
+
+    let response = app.oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}

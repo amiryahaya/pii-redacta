@@ -29,9 +29,38 @@ fn test_tier_response_serialization() {
     };
 
     let json = serde_json::to_value(&tier).expect("Should serialize");
-    // Verify camelCase field names
+
+    // Verify all 8 fields exist and have correct camelCase names (M9)
+    assert_eq!(json["id"], "tier-1");
+    assert_eq!(json["name"], "pro");
     assert_eq!(json["displayName"], "Professional");
+    assert_eq!(json["description"], "Pro tier");
+    assert_eq!(json["limits"]["max_files_per_month"], 1000);
+    assert_eq!(json["features"]["pdf_support"], true);
     assert_eq!(json["monthlyPriceCents"], 2999);
     assert_eq!(json["yearlyPriceCents"], 29990);
-    assert_eq!(json["name"], "pro");
+
+    // Verify no snake_case keys leaked
+    assert!(json.get("display_name").is_none());
+    assert!(json.get("monthly_price_cents").is_none());
+    assert!(json.get("yearly_price_cents").is_none());
+}
+
+#[test]
+fn test_tier_response_serialization_nullable() {
+    let tier = TierResponse {
+        id: "tier-2".to_string(),
+        name: "free".to_string(),
+        display_name: "Free".to_string(),
+        description: None,
+        limits: serde_json::json!({}),
+        features: serde_json::json!({}),
+        monthly_price_cents: None,
+        yearly_price_cents: None,
+    };
+
+    let json = serde_json::to_value(&tier).expect("Should serialize");
+    assert!(json["description"].is_null());
+    assert!(json["monthlyPriceCents"].is_null());
+    assert!(json["yearlyPriceCents"].is_null());
 }

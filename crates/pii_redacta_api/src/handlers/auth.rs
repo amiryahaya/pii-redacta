@@ -401,23 +401,26 @@ pub async fn change_password(
     let new_hash = hash_password(&req.new_password)?;
 
     // Update password and password_changed_at timestamp (S12-1b)
-    sqlx::query("UPDATE users SET password_hash = $1, password_changed_at = NOW(), updated_at = NOW() WHERE id = $2")
-        .bind(&new_hash)
-        .bind(auth_user.user_id)
-        .execute(state.db.pool())
-        .await?;
+    // Use RETURNING to get the DB timestamp for Redis (avoids clock skew — M1)
+    let (pw_changed_at,) = sqlx::query_as::<_, (chrono::DateTime<Utc>,)>(
+        "UPDATE users SET password_hash = $1, password_changed_at = NOW(), updated_at = NOW() WHERE id = $2 RETURNING password_changed_at",
+    )
+    .bind(&new_hash)
+    .bind(auth_user.user_id)
+    .fetch_one(state.db.pool())
+    .await?;
 
     // Fire-and-forget: set Redis key for fast token invalidation (S12-1b)
+    // TTL derived from JWT expiration to match token lifetime (L1)
     if let Some(ref redis) = state.redis {
         let redis = redis.clone();
         let user_id = auth_user.user_id;
+        let ttl_secs = (state.jwt_config.expiration_hours() * 3600) as u64;
+        let pw_ts = pw_changed_at.timestamp();
         tokio::spawn(async move {
             let key = format!("pw_changed:{}", user_id);
-            if let Err(e) = redis
-                .set_with_expiry(&key, chrono::Utc::now().timestamp(), 86400)
-                .await
-            {
-                tracing::warn!(error = %e, "Failed to set pw_changed Redis key");
+            if let Err(e) = redis.set_with_expiry(&key, pw_ts, ttl_secs).await {
+                tracing::warn!(error = %e, user_id = %user_id, "Failed to set pw_changed Redis key");
             }
         });
     }
@@ -695,10 +698,17 @@ mod tests {
 
     #[test]
     fn test_email_normalization_unicode() {
-        // Unicode characters in email should be lowercased
+        // ASCII uppercasing
         assert_eq!(normalize_email("USER@EXAMPLE.COM"), "user@example.com");
-        // Trimming works with unicode whitespace too (trim() handles it)
-        assert_eq!(normalize_email(" Admin@Test.CO "), "admin@test.co");
+        // Unicode whitespace trimming (trim() handles non-ASCII whitespace)
+        assert_eq!(
+            normalize_email("\u{00A0}Admin@Test.CO\u{00A0}"),
+            "admin@test.co"
+        );
+        // Unicode letters — to_lowercase handles accented chars
+        assert_eq!(normalize_email("Ü@example.com"), "ü@example.com");
+        // Mixed ASCII + Unicode
+        assert_eq!(normalize_email("ÀÁÂÃ@DOMAIN.COM"), "àáâã@domain.com");
     }
 
     #[test]
@@ -719,5 +729,45 @@ mod tests {
         let pass_129 = format!("Aa1!{}", "x".repeat(125));
         assert_eq!(pass_129.len(), 129);
         assert!(validate_password(&pass_129).is_err());
+    }
+
+    /// M10: Test all AuthHandlerError variants map to correct HTTP status codes
+    #[test]
+    fn test_auth_handler_error_status_codes() {
+        use axum::response::IntoResponse;
+
+        let cases: Vec<(AuthHandlerError, StatusCode)> = vec![
+            (AuthHandlerError::EmailExists, StatusCode::CONFLICT),
+            (
+                AuthHandlerError::InvalidCredentials,
+                StatusCode::UNAUTHORIZED,
+            ),
+            (AuthHandlerError::UserNotFound, StatusCode::NOT_FOUND),
+            (
+                AuthHandlerError::InvalidCurrentPassword,
+                StatusCode::BAD_REQUEST,
+            ),
+            (
+                AuthHandlerError::PasswordHashError,
+                StatusCode::INTERNAL_SERVER_ERROR,
+            ),
+            (
+                AuthHandlerError::Validation("test".to_string()),
+                StatusCode::BAD_REQUEST,
+            ),
+            (
+                AuthHandlerError::Database(sqlx::Error::RowNotFound),
+                StatusCode::INTERNAL_SERVER_ERROR,
+            ),
+        ];
+
+        for (error, expected_status) in cases {
+            let response = error.into_response();
+            assert_eq!(
+                response.status(),
+                expected_status,
+                "Unexpected status for AuthHandlerError variant"
+            );
+        }
     }
 }

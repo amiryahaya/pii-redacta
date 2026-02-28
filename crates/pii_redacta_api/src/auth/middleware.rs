@@ -93,13 +93,17 @@ pub async fn simple_auth_middleware(
     Ok(next.run(request).await)
 }
 
-/// Middleware that applies rate limiting to unauthenticated requests (by IP)
+/// Middleware that applies rate limiting to unauthenticated requests (by IP).
+///
+/// Note (M4): This middleware uses `Arc<AuthState>` which doesn't carry trusted_proxies.
+/// XFF is intentionally ignored here — only ConnectInfo is used. If XFF support is needed
+/// for API-key-auth routes behind a load balancer, add trusted_proxies to `AuthState`.
 pub async fn ip_rate_limit_middleware(
     State(state): State<Arc<AuthState>>,
     request: Request,
     next: Next,
 ) -> Result<Response, AuthError> {
-    // Extract client IP using ConnectInfo (S12-3: XFF only trusted from known proxies)
+    // Extract client IP using ConnectInfo only (no XFF trust without proxy config)
     let ip = request
         .extensions()
         .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
@@ -271,7 +275,7 @@ pub async fn jwt_auth_middleware_with_state(
         // Try Redis first for fast path
         let key = format!("pw_changed:{}", user_id);
         match redis.get_i64(&key).await {
-            Ok(Some(pw_changed_ts)) => claims.iat < pw_changed_ts,
+            Ok(Some(pw_changed_ts)) => claims.iat <= pw_changed_ts,
             Ok(None) => {
                 // Redis key doesn't exist — check DB as fallback
                 check_password_changed_at_db(&state, user_id, claims.iat).await
@@ -301,16 +305,23 @@ pub async fn jwt_auth_middleware_with_state(
 }
 
 /// Check DB for password_changed_at and compare against token iat.
+///
+/// Fails closed: DB errors reject the token (returns `true`) to prevent
+/// stale tokens from being accepted when the DB is unreachable.
 async fn check_password_changed_at_db(state: &AppState, user_id: uuid::Uuid, iat: i64) -> bool {
     let result = sqlx::query_as::<_, (Option<chrono::DateTime<chrono::Utc>>,)>(
-        "SELECT password_changed_at FROM users WHERE id = $1",
+        "SELECT password_changed_at FROM users WHERE id = $1 AND deleted_at IS NULL",
     )
     .bind(user_id)
     .fetch_optional(state.db.pool())
     .await;
 
     match result {
-        Ok(Some((Some(pw_changed_at),))) => iat < pw_changed_at.timestamp(),
-        _ => false,
+        Ok(Some((Some(pw_changed_at),))) => iat <= pw_changed_at.timestamp(),
+        Ok(Some((None,))) | Ok(None) => false,
+        Err(e) => {
+            tracing::warn!(error = %e, user_id = %user_id, "DB error checking password_changed_at, failing closed");
+            true
+        }
     }
 }
