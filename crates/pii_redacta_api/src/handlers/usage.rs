@@ -264,10 +264,10 @@ pub async fn get_dashboard_stats(
     .fetch_one(state.db.pool())
     .await?;
 
-    // Quota from tier
+    // Quota from tier (max_files_per_month is the JSONB key in seed data)
     let monthly_limit = sqlx::query_scalar::<_, Option<i64>>(
         r#"
-        SELECT (t.limits->>'max_requests_per_month')::bigint
+        SELECT (t.limits->>'max_files_per_month')::bigint
         FROM subscriptions s
         JOIN tiers t ON s.tier_id = t.id
         WHERE s.user_id = $1 AND s.status IN ('trial', 'active', 'past_due')
@@ -279,7 +279,7 @@ pub async fn get_dashboard_stats(
     .flatten();
 
     let quota_usage = match monthly_limit {
-        Some(limit) if limit > 0 => (current.0 as f64 / limit as f64) * 100.0,
+        Some(limit) if limit > 0 => (current.1 as f64 / limit as f64) * 100.0,
         _ => 0.0,
     };
 
@@ -408,7 +408,7 @@ pub async fn get_usage_summary(
 
     let monthly_limit = sqlx::query_scalar::<_, Option<i64>>(
         r#"
-        SELECT (t.limits->>'max_requests_per_month')::bigint
+        SELECT (t.limits->>'max_files_per_month')::bigint
         FROM subscriptions s
         JOIN tiers t ON s.tier_id = t.id
         WHERE s.user_id = $1 AND s.status IN ('trial', 'active', 'past_due')
@@ -420,7 +420,7 @@ pub async fn get_usage_summary(
     .flatten();
 
     let quota_usage = match monthly_limit {
-        Some(limit) if limit > 0 => (current.0 as f64 / limit as f64) * 100.0,
+        Some(limit) if limit > 0 => (current.1 as f64 / limit as f64) * 100.0,
         _ => 0.0,
     };
 

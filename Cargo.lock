@@ -1539,6 +1539,7 @@ dependencies = [
  "config",
  "futures",
  "jsonwebtoken",
+ "once_cell",
  "pii_redacta_core",
  "redis",
  "regex",

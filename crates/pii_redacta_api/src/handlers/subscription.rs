@@ -18,17 +18,29 @@ use serde_json::Value;
 pub enum SubscriptionError {
     #[error("Database error: {0}")]
     Database(#[from] sqlx::Error),
+    #[error("No active subscription found")]
+    NotFound,
 }
 
 impl IntoResponse for SubscriptionError {
     fn into_response(self) -> axum::response::Response {
+        let (status, message) = match &self {
+            SubscriptionError::NotFound => (
+                StatusCode::NOT_FOUND,
+                "No active subscription found. Please subscribe to a plan.",
+            ),
+            SubscriptionError::Database(_) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "An unexpected error occurred",
+            ),
+        };
         let body = serde_json::json!({
             "error": {
-                "code": 500,
-                "message": "An unexpected error occurred",
+                "code": status.as_u16(),
+                "message": message,
             }
         });
-        (StatusCode::INTERNAL_SERVER_ERROR, Json(body)).into_response()
+        (status, Json(body)).into_response()
     }
 }
 
@@ -56,33 +68,34 @@ pub struct TierResponse {
     pub yearly_price_cents: Option<i32>,
 }
 
+/// Named row struct for subscription query (replaces fragile 13-element tuple)
+#[derive(sqlx::FromRow)]
+struct SubscriptionRow {
+    sub_id: uuid::Uuid,
+    status: String,
+    tier_id: uuid::Uuid,
+    tier_name: String,
+    display_name: String,
+    description: Option<String>,
+    limits: Value,
+    features: Value,
+    monthly_price_cents: Option<i32>,
+    yearly_price_cents: Option<i32>,
+    current_period_start: Option<chrono::DateTime<chrono::Utc>>,
+    current_period_end: Option<chrono::DateTime<chrono::Utc>>,
+    cancel_at_period_end: bool,
+}
+
 /// Get current user's subscription
 pub async fn get_subscription(
     State(state): State<AppState>,
     Extension(auth_user): Extension<AuthUser>,
 ) -> Result<Json<SubscriptionResponse>, SubscriptionError> {
-    let row = sqlx::query_as::<
-        _,
-        (
-            uuid::Uuid,
-            String,
-            uuid::Uuid,
-            String,
-            String,
-            Option<String>,
-            Value,
-            Value,
-            Option<i32>,
-            Option<i32>,
-            Option<chrono::DateTime<chrono::Utc>>,
-            Option<chrono::DateTime<chrono::Utc>>,
-            bool,
-        ),
-    >(
+    let row = sqlx::query_as::<_, SubscriptionRow>(
         r#"
-        SELECT 
-            s.id,
-            s.status,
+        SELECT
+            s.id as sub_id,
+            s.status::text as status,
             t.id as tier_id,
             t.name as tier_name,
             t.display_name,
@@ -96,32 +109,34 @@ pub async fn get_subscription(
             s.cancel_at_period_end
         FROM subscriptions s
         JOIN tiers t ON s.tier_id = t.id
-        WHERE s.user_id = $1 
+        WHERE s.user_id = $1
         AND s.status IN ('trial', 'active', 'past_due')
         ORDER BY s.created_at DESC
         LIMIT 1
         "#,
     )
     .bind(auth_user.user_id)
-    .fetch_one(state.db.pool())
+    .fetch_optional(state.db.pool())
     .await?;
 
+    let row = row.ok_or(SubscriptionError::NotFound)?;
+
     Ok(Json(SubscriptionResponse {
-        id: row.0.to_string(),
-        status: row.1,
+        id: row.sub_id.to_string(),
+        status: row.status,
         tier: TierResponse {
-            id: row.2.to_string(),
-            name: row.3,
-            display_name: row.4,
-            description: row.5,
-            limits: row.6,
-            features: row.7,
-            monthly_price_cents: row.8,
-            yearly_price_cents: row.9,
+            id: row.tier_id.to_string(),
+            name: row.tier_name,
+            display_name: row.display_name,
+            description: row.description,
+            limits: row.limits,
+            features: row.features,
+            monthly_price_cents: row.monthly_price_cents,
+            yearly_price_cents: row.yearly_price_cents,
         },
-        current_period_start: row.10.map(|d| d.to_rfc3339()),
-        current_period_end: row.11.map(|d| d.to_rfc3339()),
-        cancel_at_period_end: row.12,
+        current_period_start: row.current_period_start.map(|d| d.to_rfc3339()),
+        current_period_end: row.current_period_end.map(|d| d.to_rfc3339()),
+        cancel_at_period_end: row.cancel_at_period_end,
     }))
 }
 
@@ -143,7 +158,7 @@ pub async fn list_tiers(
         ),
     >(
         r#"
-        SELECT 
+        SELECT
             id,
             name,
             display_name,

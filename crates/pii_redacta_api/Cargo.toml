@@ -36,6 +36,7 @@ validator = { workspace = true }
 tower-http = { workspace = true }
 config = { workspace = true }
 regex = { workspace = true }
+once_cell = { workspace = true }
 
 [dev-dependencies]
 tokio-test = { workspace = true }

@@ -108,6 +108,15 @@ pub enum AuthError {
     #[error("Invalid API key format")]
     InvalidApiKeyFormat,
 
+    #[error("Missing authentication token")]
+    MissingToken,
+
+    #[error("Authentication token has expired")]
+    TokenExpired,
+
+    #[error("Invalid authentication token")]
+    InvalidToken,
+
     #[error("Rate limit exceeded")]
     RateLimitExceeded,
 
@@ -146,6 +155,15 @@ impl IntoResponse for AuthError {
                 "Missing API key. Include 'Authorization: Bearer <key>' header.",
             ),
             AuthError::InvalidApiKeyFormat => (StatusCode::UNAUTHORIZED, "Invalid API key format."),
+            AuthError::MissingToken => (
+                StatusCode::UNAUTHORIZED,
+                "Missing authentication token. Include 'Authorization: Bearer <token>' header.",
+            ),
+            AuthError::TokenExpired => (
+                StatusCode::UNAUTHORIZED,
+                "Authentication token has expired. Please log in again.",
+            ),
+            AuthError::InvalidToken => (StatusCode::UNAUTHORIZED, "Invalid authentication token."),
             AuthError::ApiKey(e) => match e {
                 pii_redacta_core::db::api_key_manager::ApiKeyError::NotFound => {
                     (StatusCode::UNAUTHORIZED, "Invalid API key.")
@@ -174,7 +192,6 @@ impl IntoResponse for AuthError {
             "error": {
                 "code": status.as_u16(),
                 "message": error_message,
-                "details": self.to_string(),
             }
         });
 

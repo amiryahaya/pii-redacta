@@ -16,8 +16,20 @@ use axum::{
     Json,
 };
 use chrono::Utc;
+use once_cell::sync::Lazy;
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
+
+/// Compiled email regex — avoids recompiling on every validation call (S9-8)
+static EMAIL_REGEX: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$").unwrap());
+
+/// Maximum email length (S9-37)
+const MAX_EMAIL_LENGTH: usize = 255;
+
+/// Maximum password length to prevent DoS via Argon2 (S9-14)
+const MAX_PASSWORD_LENGTH: usize = 128;
 
 /// Auth error types
 #[derive(Debug, thiserror::Error)]
@@ -131,25 +143,28 @@ pub struct UserResponse {
     pub created_at: String,
 }
 
-/// Validate email format
+/// Validate email format (S9-37: max length, S9-8: uses static regex)
 fn validate_email(email: &str) -> Result<(), &'static str> {
+    if email.len() > MAX_EMAIL_LENGTH {
+        return Err("Email must be less than 255 characters");
+    }
     if email.len() < 5 {
         return Err("Email must be at least 5 characters");
     }
     if !email.contains('@') {
         return Err("Email must contain @");
     }
-    // More strict validation using regex pattern
-    let email_regex =
-        regex::Regex::new(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$").unwrap();
-    if !email_regex.is_match(email) {
+    if !EMAIL_REGEX.is_match(email) {
         return Err("Invalid email format");
     }
     Ok(())
 }
 
-/// Validate password strength
+/// Validate password strength (S9-14: max length check)
 fn validate_password(password: &str) -> Result<(), &'static str> {
+    if password.len() > MAX_PASSWORD_LENGTH {
+        return Err("Password must be less than 128 characters");
+    }
     if password.len() < 8 {
         return Err("Password must be at least 8 characters long");
     }
@@ -173,13 +188,21 @@ fn validate_password(password: &str) -> Result<(), &'static str> {
     Ok(())
 }
 
+/// Normalize email to lowercase (S9-9)
+fn normalize_email(email: &str) -> String {
+    email.trim().to_lowercase()
+}
+
 /// Register a new user
 pub async fn register(
     State(state): State<AppState>,
     Json(req): Json<RegisterRequest>,
 ) -> Result<Json<AuthResponse>, AuthHandlerError> {
+    // Normalize email (S9-9)
+    let email = normalize_email(&req.email);
+
     // Validate email
-    if let Err(e) = validate_email(&req.email) {
+    if let Err(e) = validate_email(&email) {
         return Err(AuthHandlerError::Validation(e.to_string()));
     }
 
@@ -206,20 +229,10 @@ pub async fn register(
         }
     }
 
-    // Check if email already exists
-    let existing = sqlx::query("SELECT id FROM users WHERE email = $1 AND deleted_at IS NULL")
-        .bind(&req.email)
-        .fetch_optional(state.db.pool())
-        .await?;
-
-    if existing.is_some() {
-        return Err(AuthHandlerError::EmailExists);
-    }
-
     // Hash password with Argon2id
     let password_hash = hash_password(&req.password)?;
 
-    // Create user
+    // Create user — use INSERT ... ON CONFLICT to handle race condition (S9-7)
     let user_id = Uuid::new_v4();
     let user = sqlx::query_as::<_, UserRow>(
         r#"
@@ -229,12 +242,21 @@ pub async fn register(
         "#,
     )
     .bind(user_id)
-    .bind(&req.email)
+    .bind(&email)
     .bind(&password_hash)
     .bind(&req.display_name)
     .bind(&req.company_name)
     .fetch_one(state.db.pool())
-    .await?;
+    .await
+    .map_err(|e| {
+        // Handle unique violation (duplicate email) — catches race condition (S9-7)
+        if let sqlx::Error::Database(ref db_err) = e {
+            if db_err.code().as_deref() == Some("23505") {
+                return AuthHandlerError::EmailExists;
+            }
+        }
+        AuthHandlerError::Database(e)
+    })?;
 
     // Create trial subscription (14 days)
     let trial_tier = sqlx::query_as::<_, (Uuid,)>("SELECT id FROM tiers WHERE name = 'trial'")
@@ -266,21 +288,24 @@ pub async fn login(
     State(state): State<AppState>,
     Json(req): Json<LoginRequest>,
 ) -> Result<Json<AuthResponse>, AuthHandlerError> {
+    // Normalize email (S9-9)
+    let email = normalize_email(&req.email);
+
     // Validate email
-    if let Err(e) = validate_email(&req.email) {
+    if let Err(e) = validate_email(&email) {
         return Err(AuthHandlerError::Validation(e.to_string()));
     }
 
-    // Find user by email
+    // Find user by email (login needs password_hash for verification)
     let user = sqlx::query_as::<_, UserRow>(
         r#"
-        SELECT id, email, password_hash, display_name, company_name, 
+        SELECT id, email, password_hash, display_name, company_name,
                email_notifications_enabled, is_admin, created_at
-        FROM users 
+        FROM users
         WHERE email = $1 AND deleted_at IS NULL
         "#,
     )
-    .bind(&req.email)
+    .bind(&email)
     .fetch_optional(state.db.pool())
     .await?;
 
@@ -309,16 +334,16 @@ pub async fn login(
     }))
 }
 
-/// Get current user info
+/// Get current user info (S9-6: does NOT select password_hash)
 pub async fn me(
     State(state): State<AppState>,
     Extension(auth_user): Extension<AuthUser>,
 ) -> Result<Json<UserResponse>, AuthHandlerError> {
-    let user = sqlx::query_as::<_, UserRow>(
+    let user = sqlx::query_as::<_, UserRowPublic>(
         r#"
-        SELECT id, email, password_hash, display_name, company_name, 
+        SELECT id, email, display_name, company_name,
                email_notifications_enabled, is_admin, created_at
-        FROM users 
+        FROM users
         WHERE id = $1 AND deleted_at IS NULL
         "#,
     )
@@ -372,7 +397,7 @@ pub async fn change_password(
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// Update user profile
+/// Update user profile (S9-6: does NOT select password_hash)
 pub async fn update_user(
     State(state): State<AppState>,
     Extension(auth_user): Extension<AuthUser>,
@@ -396,14 +421,14 @@ pub async fn update_user(
         }
     }
 
-    let user = sqlx::query_as::<_, UserRow>(
+    let user = sqlx::query_as::<_, UserRowPublic>(
         r#"
         UPDATE users
         SET display_name = COALESCE($1, display_name),
             company_name = COALESCE($2, company_name),
             updated_at = NOW()
         WHERE id = $3 AND deleted_at IS NULL
-        RETURNING id, email, password_hash, display_name, company_name,
+        RETURNING id, email, display_name, company_name,
                   email_notifications_enabled, is_admin, created_at
         "#,
     )
@@ -455,7 +480,7 @@ pub async fn get_preferences(
     }
 }
 
-/// Update user notification preferences
+/// Update user notification preferences (S9-11: checks rows affected)
 pub async fn update_preferences(
     State(state): State<AppState>,
     Extension(auth_user): Extension<AuthUser>,
@@ -463,7 +488,7 @@ pub async fn update_preferences(
 ) -> Result<Json<UserPreferences>, AuthHandlerError> {
     let any_enabled = req.email_quota_alert || req.email_security_alert || req.email_monthly_report;
 
-    sqlx::query(
+    let result = sqlx::query(
         r#"
         UPDATE users
         SET email_notifications_enabled = $1, updated_at = NOW()
@@ -474,6 +499,10 @@ pub async fn update_preferences(
     .bind(auth_user.user_id)
     .execute(state.db.pool())
     .await?;
+
+    if result.rows_affected() == 0 {
+        return Err(AuthHandlerError::UserNotFound);
+    }
 
     Ok(Json(req))
 }
@@ -505,7 +534,7 @@ fn verify_password(password: &str, hash: &str) -> Result<bool, AuthHandlerError>
         .is_ok())
 }
 
-/// User row from database
+/// User row from database (includes password_hash — only for login/register)
 #[derive(sqlx::FromRow)]
 struct UserRow {
     id: Uuid,
@@ -520,6 +549,32 @@ struct UserRow {
 
 impl From<UserRow> for UserResponse {
     fn from(row: UserRow) -> Self {
+        Self {
+            id: row.id.to_string(),
+            email: row.email,
+            display_name: row.display_name,
+            company_name: row.company_name,
+            email_notifications_enabled: row.email_notifications_enabled,
+            is_admin: row.is_admin,
+            created_at: row.created_at.to_rfc3339(),
+        }
+    }
+}
+
+/// User row without password_hash — for read-only queries (S9-6)
+#[derive(sqlx::FromRow)]
+struct UserRowPublic {
+    id: Uuid,
+    email: String,
+    display_name: Option<String>,
+    company_name: Option<String>,
+    email_notifications_enabled: bool,
+    is_admin: bool,
+    created_at: chrono::DateTime<Utc>,
+}
+
+impl From<UserRowPublic> for UserResponse {
+    fn from(row: UserRowPublic) -> Self {
         Self {
             id: row.id.to_string(),
             email: row.email,
@@ -548,6 +603,12 @@ mod tests {
     fn test_password_validation_too_short() {
         assert!(validate_password("T1!").is_err());
         assert!(validate_password("T1!aaaa").is_err()); // 7 chars
+    }
+
+    #[test]
+    fn test_password_validation_too_long() {
+        let long_pass = format!("Aa1!{}", "x".repeat(125));
+        assert!(validate_password(&long_pass).is_err());
     }
 
     #[test]
@@ -580,5 +641,17 @@ mod tests {
         assert!(validate_email("@example.com").is_err());
         assert!(validate_email("test@").is_err());
         assert!(validate_email("a@b").is_err()); // TLD too short
+    }
+
+    #[test]
+    fn test_email_validation_too_long() {
+        let long_email = format!("{}@example.com", "a".repeat(250));
+        assert!(validate_email(&long_email).is_err());
+    }
+
+    #[test]
+    fn test_email_normalization() {
+        assert_eq!(normalize_email("Test@Example.COM"), "test@example.com");
+        assert_eq!(normalize_email("  user@test.com  "), "user@test.com");
     }
 }

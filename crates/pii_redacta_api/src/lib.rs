@@ -194,8 +194,11 @@ pub fn create_app_with_auth(
 }
 
 /// Create CORS layer based on configuration
+///
+/// Note: `allow_credentials(true)` is incompatible with wildcard `allow_origin(Any)` per
+/// the CORS spec. When origins are `*`, credentials are disabled. (S9-1)
 fn create_cors_layer(origins: Option<Vec<String>>) -> CorsLayer {
-    let mut cors = CorsLayer::new()
+    let cors = CorsLayer::new()
         .allow_methods([
             axum::http::Method::GET,
             axum::http::Method::POST,
@@ -209,29 +212,27 @@ fn create_cors_layer(origins: Option<Vec<String>>) -> CorsLayer {
             axum::http::header::CONTENT_TYPE,
             axum::http::header::HeaderName::from_static("x-request-id"),
         ])
-        .allow_credentials(true)
         .max_age(std::time::Duration::from_secs(3600));
 
-    // Configure allowed origins
-    if let Some(origins) = origins {
-        if origins.iter().any(|o| o == "*") {
-            cors = cors.allow_origin(Any);
-        } else {
+    // Configure allowed origins — wildcard disables credentials
+    match origins {
+        Some(origins) if origins.iter().any(|o| o == "*") => cors.allow_origin(Any),
+        Some(origins) => {
             let allowed_origins: Vec<axum::http::HeaderValue> =
                 origins.into_iter().filter_map(|o| o.parse().ok()).collect();
-            cors = cors.allow_origin(allowed_origins);
+            cors.allow_origin(allowed_origins).allow_credentials(true)
         }
-    } else {
-        // Default: allow common development ports
-        cors = cors.allow_origin([
-            "http://localhost:3000".parse().unwrap(),
-            "http://localhost:5173".parse().unwrap(),
-            "http://127.0.0.1:3000".parse().unwrap(),
-            "http://127.0.0.1:5173".parse().unwrap(),
-        ]);
+        None => {
+            // Default: allow common development ports with credentials
+            cors.allow_origin([
+                "http://localhost:3000".parse().unwrap(),
+                "http://localhost:5173".parse().unwrap(),
+                "http://127.0.0.1:3000".parse().unwrap(),
+                "http://127.0.0.1:5173".parse().unwrap(),
+            ])
+            .allow_credentials(true)
+        }
     }
-
-    cors
 }
 
 /// Initialize tracing subscriber for structured logging

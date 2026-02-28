@@ -15,6 +15,11 @@ use pii_redacta_core::db::api_key_manager::{ApiKeyEnvironment, ApiKeyManager};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+/// Maximum allowed expiration period in days
+const MAX_EXPIRES_DAYS: i32 = 365;
+/// Minimum allowed expiration period in days
+const MIN_EXPIRES_DAYS: i32 = 1;
+
 /// API Key response for portal (without sensitive data)
 #[derive(Debug, Serialize)]
 pub struct ApiKeyResponse {
@@ -67,6 +72,8 @@ pub enum ApiKeyHandlerError {
     NotFound,
     #[error("Maximum number of API keys reached")]
     MaxKeysReached,
+    #[error("Validation error: {0}")]
+    Validation(String),
 }
 
 impl IntoResponse for ApiKeyHandlerError {
@@ -81,6 +88,7 @@ impl IntoResponse for ApiKeyHandlerError {
                 StatusCode::FORBIDDEN,
                 "Maximum number of API keys reached for your plan",
             ),
+            ApiKeyHandlerError::Validation(msg) => (StatusCode::BAD_REQUEST, msg.as_str()),
             _ => (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "An unexpected error occurred",
@@ -96,6 +104,22 @@ impl IntoResponse for ApiKeyHandlerError {
 
         (status, Json(body)).into_response()
     }
+}
+
+/// Derive environment from key_prefix format (S9-22)
+///
+/// API key prefixes follow the format: `pii_{env}_{random}`
+/// e.g. `pii_live_abc123` → "live", `pii_test_xyz789` → "test"
+fn environment_from_prefix(key_prefix: &str) -> String {
+    let parts: Vec<&str> = key_prefix.split('_').collect();
+    if parts.len() >= 2 {
+        match parts[1] {
+            "test" => return "test".to_string(),
+            "live" => return "live".to_string(),
+            _ => {}
+        }
+    }
+    "live".to_string()
 }
 
 /// List all API keys for the authenticated user
@@ -114,14 +138,8 @@ pub async fn list_api_keys(
     let responses: Vec<ApiKeyResponse> = keys
         .into_iter()
         .map(|key| {
-            // Extract environment from key prefix format: pii_{env}_{prefix}_{secret}
-            // For now, derive from key_prefix or default to 'live'
-            let environment = if key.name.to_lowercase().contains("test") {
-                "test"
-            } else {
-                "live"
-            }
-            .to_string();
+            // Derive environment from key_prefix format (S9-22)
+            let environment = environment_from_prefix(&key.key_prefix);
 
             ApiKeyResponse {
                 id: key.id.to_string(),
@@ -151,6 +169,16 @@ pub async fn create_api_key(
         "test" => ApiKeyEnvironment::Test,
         _ => return Err(ApiKeyHandlerError::InvalidEnvironment),
     };
+
+    // Validate expires_days bounds (S9-28)
+    if let Some(days) = req.expires_days {
+        if !(MIN_EXPIRES_DAYS..=MAX_EXPIRES_DAYS).contains(&days) {
+            return Err(ApiKeyHandlerError::Validation(format!(
+                "expires_days must be between {} and {}",
+                MIN_EXPIRES_DAYS, MAX_EXPIRES_DAYS
+            )));
+        }
+    }
 
     // Create API key manager
     let api_key_manager = ApiKeyManager::new(state.db.clone(), state.jwt_config.secret())?;
@@ -196,11 +224,11 @@ pub async fn create_api_key(
     // Query the newly created key to get its actual ID
     let created_key = sqlx::query_as::<_, pii_redacta_core::db::models::ApiKey>(
         r#"
-        SELECT 
+        SELECT
             id, user_id, key_prefix, key_hash, name,
             last_used_at, expires_at, is_active, revoked_at,
             revoked_reason, created_at
-        FROM api_keys 
+        FROM api_keys
         WHERE user_id = $1 AND key_prefix = $2
         ORDER BY created_at DESC
         LIMIT 1
@@ -226,7 +254,7 @@ pub async fn create_api_key(
     }))
 }
 
-/// Delete (revoke) an API key without a request body
+/// Delete (revoke) an API key without a request body (S9-25: propagate errors properly)
 pub async fn delete_api_key(
     State(state): State<AppState>,
     Extension(auth_user): Extension<AuthUser>,
@@ -234,20 +262,25 @@ pub async fn delete_api_key(
 ) -> Result<StatusCode, ApiKeyHandlerError> {
     let api_key_manager = ApiKeyManager::new(state.db.clone(), state.jwt_config.secret())?;
 
-    let key = api_key_manager.get_key(key_id, auth_user.user_id).await;
+    // Verify the key exists and belongs to the user — propagate DB errors (S9-25)
+    let key = api_key_manager
+        .get_key(key_id, auth_user.user_id)
+        .await
+        .map_err(|e| match e {
+            pii_redacta_core::db::api_key_manager::ApiKeyError::NotFound => {
+                ApiKeyHandlerError::NotFound
+            }
+            other => ApiKeyHandlerError::ApiKeyManager(other),
+        })?;
 
-    match key {
-        Ok(_) => {
-            api_key_manager
-                .revoke_key(key_id, auth_user.user_id, None)
-                .await?;
-            Ok(StatusCode::NO_CONTENT)
-        }
-        Err(_) => Err(ApiKeyHandlerError::NotFound),
-    }
+    api_key_manager
+        .revoke_key(key.id, auth_user.user_id, None)
+        .await?;
+
+    Ok(StatusCode::NO_CONTENT)
 }
 
-/// Revoke an API key
+/// Revoke an API key (S9-25: propagate errors properly)
 pub async fn revoke_api_key(
     State(state): State<AppState>,
     Extension(auth_user): Extension<AuthUser>,
@@ -256,17 +289,40 @@ pub async fn revoke_api_key(
 ) -> Result<StatusCode, ApiKeyHandlerError> {
     let api_key_manager = ApiKeyManager::new(state.db.clone(), state.jwt_config.secret())?;
 
-    // Verify the key belongs to the user
-    let key = api_key_manager.get_key(key_id, auth_user.user_id).await;
+    // Verify the key belongs to the user — propagate DB errors (S9-25)
+    let key = api_key_manager
+        .get_key(key_id, auth_user.user_id)
+        .await
+        .map_err(|e| match e {
+            pii_redacta_core::db::api_key_manager::ApiKeyError::NotFound => {
+                ApiKeyHandlerError::NotFound
+            }
+            other => ApiKeyHandlerError::ApiKeyManager(other),
+        })?;
 
-    match key {
-        Ok(_) => {
-            // Key exists and belongs to user, revoke it
-            api_key_manager
-                .revoke_key(key_id, auth_user.user_id, req.reason.as_deref())
-                .await?;
-            Ok(StatusCode::NO_CONTENT)
-        }
-        Err(_) => Err(ApiKeyHandlerError::NotFound),
+    api_key_manager
+        .revoke_key(key.id, auth_user.user_id, req.reason.as_deref())
+        .await?;
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_environment_from_prefix() {
+        assert_eq!(environment_from_prefix("pii_live_abc123"), "live");
+        assert_eq!(environment_from_prefix("pii_test_xyz789"), "test");
+        assert_eq!(environment_from_prefix("pii_unknown_abc"), "live");
+        assert_eq!(environment_from_prefix("invalid"), "live");
+    }
+
+    #[test]
+    fn test_expires_days_bounds() {
+        // Verify constants are sensible at compile-time
+        const _: () = assert!(MIN_EXPIRES_DAYS > 0);
+        const _: () = assert!(MAX_EXPIRES_DAYS <= 365);
     }
 }

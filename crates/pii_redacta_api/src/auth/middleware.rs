@@ -3,7 +3,7 @@
 //! Provides layers that can be applied to routes for API key
 //! authentication and rate limiting.
 
-use super::{extract_api_key, AuthError, AuthState, AuthenticatedUser};
+use super::{extract_api_key, extractors::SimpleAuth, AuthError, AuthState, AuthenticatedUser};
 use axum::{
     extract::{Request, State},
     middleware::Next,
@@ -176,17 +176,6 @@ async fn get_user_info(
     })
 }
 
-/// Simple authentication info (without tier details)
-#[derive(Debug, Clone)]
-pub struct SimpleAuth {
-    /// User ID
-    pub user_id: uuid::Uuid,
-    /// API key ID
-    pub api_key_id: uuid::Uuid,
-    /// Environment
-    pub environment: pii_redacta_core::db::api_key_manager::ApiKeyEnvironment,
-}
-
 /// Extension trait to extract authentication info from requests
 pub trait RequestAuthExt {
     /// Get the authenticated user (full info)
@@ -226,19 +215,19 @@ pub async fn jwt_auth_middleware(
 
     let token = match auth_header {
         Some(header) => {
-            crate::jwt::extract_token_from_header(header).ok_or(AuthError::MissingApiKey)?
+            crate::jwt::extract_token_from_header(header).ok_or(AuthError::MissingToken)?
         }
-        None => return Err(AuthError::MissingApiKey),
+        None => return Err(AuthError::MissingToken),
     };
 
-    // Validate token
-    let claims = validate_token(token, &jwt_config).map_err(|_| AuthError::InvalidApiKeyFormat)?;
+    // Validate token — map specific JWT errors to appropriate AuthError variants (S9-31)
+    let claims = validate_token(token, &jwt_config).map_err(|e| match e {
+        crate::jwt::JwtError::Expired => AuthError::TokenExpired,
+        _ => AuthError::InvalidToken,
+    })?;
 
     // Parse user ID
-    let user_id = claims
-        .sub
-        .parse()
-        .map_err(|_| AuthError::InvalidApiKeyFormat)?;
+    let user_id = claims.sub.parse().map_err(|_| AuthError::InvalidToken)?;
 
     // Store user info in request extensions
     request.extensions_mut().insert(AuthUser {
@@ -249,6 +238,3 @@ pub async fn jwt_auth_middleware(
 
     Ok(next.run(request).await)
 }
-
-/// Re-export extractor functions
-pub use super::extractors::{extract_api_auth, extract_simple_auth, try_extract_auth};
