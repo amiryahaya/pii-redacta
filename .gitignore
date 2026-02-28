@@ -18,6 +18,9 @@ target/
 # VSCode
 .vscode/
 
+# Claude Code
+.claude/
+
 # macOS
 .DS_Store
 .AppleDouble
