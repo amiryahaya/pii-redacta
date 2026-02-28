@@ -14,6 +14,8 @@ import type {
   UserPreferences,
   DashboardStats,
   UsageSummary,
+  PlaygroundResponse,
+  PlaygroundHistoryEntry,
 } from '../types'
 
 const api = axios.create({
@@ -101,6 +103,26 @@ export const userApi = {
     api.patch<UserPreferences>('/users/me/preferences', data),
 
   getPreferences: () => api.get<UserPreferences>('/users/me/preferences'),
+}
+
+// Playground API
+export const playgroundApi = {
+  submitText: (data: { text: string; redact?: boolean }) =>
+    api.post<PlaygroundResponse>('/playground/text', data),
+
+  uploadFile: (file: File, redact?: boolean) => {
+    const formData = new FormData()
+    formData.append('file', file)
+    if (redact) {
+      formData.append('redact', 'true')
+    }
+    return api.post<PlaygroundResponse>('/playground/file', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    })
+  },
+
+  getHistory: () =>
+    api.get<PlaygroundHistoryEntry[]>('/playground/history'),
 }
 
 // Dashboard API

@@ -115,6 +115,36 @@ export interface UserPreferences {
   emailMonthlyReport: boolean
 }
 
+export interface PlaygroundEntity {
+  entity_type: string
+  value: string
+  start: number
+  end: number
+  confidence: number
+}
+
+export interface PlaygroundResponse {
+  entities: PlaygroundEntity[]
+  processingTimeMs: number
+  redactedText: string | null
+  textLength: number
+  dailyUsage: {
+    usedToday: number
+    dailyLimit: number | null
+  }
+}
+
+export interface PlaygroundHistoryEntry {
+  id: string
+  requestType: string
+  fileName: string | null
+  fileType: string | null
+  detectionsCount: number | null
+  processingTimeMs: number | null
+  success: boolean
+  createdAt: string
+}
+
 export interface DashboardStats {
   stats: {
     monthlyRequests: number

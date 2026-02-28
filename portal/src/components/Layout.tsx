@@ -1,6 +1,7 @@
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import {
   LayoutDashboard,
+  FlaskConical,
   Key,
   BarChart3,
   Settings,
@@ -12,6 +13,7 @@ import { authApi } from '../lib/api'
 
 const navigation = [
   { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
+  { name: 'Playground', href: '/playground', icon: FlaskConical },
   { name: 'API Keys', href: '/api-keys', icon: Key },
   { name: 'Usage', href: '/usage', icon: BarChart3 },
   { name: 'Settings', href: '/settings', icon: Settings },

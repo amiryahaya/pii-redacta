@@ -6,6 +6,7 @@ pub mod detection;
 pub mod health;
 pub mod jobs;
 pub mod metrics;
+pub mod playground;
 pub mod subscription;
 pub mod upload;
 pub mod usage;

@@ -216,6 +216,19 @@ pub async fn create_app_with_auth_opts(
             "/api/v1/usage/summary",
             get(handlers::usage::get_usage_summary),
         )
+        // Playground
+        .route(
+            "/api/v1/playground/text",
+            post(handlers::playground::playground_text),
+        )
+        .route(
+            "/api/v1/playground/file",
+            post(handlers::playground::playground_file),
+        )
+        .route(
+            "/api/v1/playground/history",
+            get(handlers::playground::playground_history),
+        )
         // Subscription
         .route(
             "/api/v1/subscription",
