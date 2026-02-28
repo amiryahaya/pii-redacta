@@ -19,6 +19,10 @@ use uuid::Uuid;
 const MAX_EXPIRES_DAYS: i32 = 365;
 /// Minimum allowed expiration period in days
 const MIN_EXPIRES_DAYS: i32 = 1;
+/// Maximum API key name length
+const MAX_KEY_NAME_LENGTH: usize = 100;
+/// Maximum revocation reason length
+const MAX_REVOKE_REASON_LENGTH: usize = 500;
 
 /// API Key response for portal (without sensitive data)
 #[derive(Debug, Serialize)]
@@ -106,51 +110,26 @@ impl IntoResponse for ApiKeyHandlerError {
     }
 }
 
-/// Derive environment from key_prefix format (S9-22)
-///
-/// API key prefixes follow the format: `pii_{env}_{random}`
-/// e.g. `pii_live_abc123` → "live", `pii_test_xyz789` → "test"
-fn environment_from_prefix(key_prefix: &str) -> String {
-    let parts: Vec<&str> = key_prefix.split('_').collect();
-    if parts.len() >= 2 {
-        match parts[1] {
-            "test" => return "test".to_string(),
-            "live" => return "live".to_string(),
-            _ => {}
-        }
-    }
-    "live".to_string()
-}
-
 /// List all API keys for the authenticated user
 pub async fn list_api_keys(
     State(state): State<AppState>,
     Extension(auth_user): Extension<AuthUser>,
 ) -> Result<Json<Vec<ApiKeyResponse>>, ApiKeyHandlerError> {
-    // Create API key manager
-    let api_key_manager = ApiKeyManager::new(
-        state.db.clone(),
-        state.jwt_config.secret(), // Reuse JWT secret for API key HMAC
-    )?;
+    let api_key_manager = ApiKeyManager::new(state.db.clone(), &state.api_key_secret)?;
 
     let keys = api_key_manager.list_user_keys(auth_user.user_id).await?;
 
     let responses: Vec<ApiKeyResponse> = keys
         .into_iter()
-        .map(|key| {
-            // Derive environment from key_prefix format (S9-22)
-            let environment = environment_from_prefix(&key.key_prefix);
-
-            ApiKeyResponse {
-                id: key.id.to_string(),
-                name: key.name,
-                key_prefix: key.key_prefix,
-                environment,
-                last_used_at: key.last_used_at.map(|d| d.to_rfc3339()),
-                expires_at: key.expires_at.map(|d| d.to_rfc3339()),
-                is_active: key.is_active,
-                created_at: key.created_at.to_rfc3339(),
-            }
+        .map(|key| ApiKeyResponse {
+            id: key.id.to_string(),
+            name: key.name,
+            key_prefix: key.key_prefix,
+            environment: key.environment.clone(),
+            last_used_at: key.last_used_at.map(|d| d.to_rfc3339()),
+            expires_at: key.expires_at.map(|d| d.to_rfc3339()),
+            is_active: key.is_active,
+            created_at: key.created_at.to_rfc3339(),
         })
         .collect();
 
@@ -163,6 +142,20 @@ pub async fn create_api_key(
     Extension(auth_user): Extension<AuthUser>,
     Json(req): Json<CreateApiKeyRequest>,
 ) -> Result<Json<CreateApiKeyResponse>, ApiKeyHandlerError> {
+    // Validate name (S9-R2-11)
+    let name = req.name.trim().to_string();
+    if name.is_empty() {
+        return Err(ApiKeyHandlerError::Validation(
+            "API key name cannot be empty".to_string(),
+        ));
+    }
+    if name.len() > MAX_KEY_NAME_LENGTH {
+        return Err(ApiKeyHandlerError::Validation(format!(
+            "API key name must be less than {} characters",
+            MAX_KEY_NAME_LENGTH
+        )));
+    }
+
     // Validate environment
     let environment = match req.environment.as_str() {
         "live" => ApiKeyEnvironment::Live,
@@ -180,8 +173,7 @@ pub async fn create_api_key(
         }
     }
 
-    // Create API key manager
-    let api_key_manager = ApiKeyManager::new(state.db.clone(), state.jwt_config.secret())?;
+    let api_key_manager = ApiKeyManager::new(state.db.clone(), &state.api_key_secret)?;
 
     // Check user's tier limit for API keys
     let subscription = sqlx::query_as::<_, (Uuid,)>(
@@ -189,6 +181,8 @@ pub async fn create_api_key(
         SELECT s.tier_id FROM subscriptions s
         JOIN tiers t ON s.tier_id = t.id
         WHERE s.user_id = $1 AND s.status IN ('trial', 'active', 'past_due')
+        ORDER BY s.created_at DESC
+        LIMIT 1
         "#,
     )
     .bind(auth_user.user_id)
@@ -216,33 +210,14 @@ pub async fn create_api_key(
         .expires_days
         .map(|days| Utc::now() + chrono::Duration::days(days as i64));
 
-    // Generate API key
+    // Generate API key — generate_key returns id and created_at from RETURNING clause
     let generated = api_key_manager
-        .generate_key(auth_user.user_id, &req.name, environment, expires_at)
+        .generate_key(auth_user.user_id, &name, environment, expires_at)
         .await?;
 
-    // Query the newly created key to get its actual ID
-    let created_key = sqlx::query_as::<_, pii_redacta_core::db::models::ApiKey>(
-        r#"
-        SELECT
-            id, user_id, key_prefix, key_hash, name,
-            last_used_at, expires_at, is_active, revoked_at,
-            revoked_reason, created_at
-        FROM api_keys
-        WHERE user_id = $1 AND key_prefix = $2
-        ORDER BY created_at DESC
-        LIMIT 1
-        "#,
-    )
-    .bind(auth_user.user_id)
-    .bind(&generated.prefix)
-    .fetch_one(state.db.pool())
-    .await
-    .map_err(ApiKeyHandlerError::Database)?;
-
     Ok(Json(CreateApiKeyResponse {
-        id: created_key.id.to_string(),
-        name: req.name,
+        id: generated.id.to_string(),
+        name,
         full_key: generated.full_key,
         key_prefix: generated.prefix,
         environment: match generated.environment {
@@ -250,7 +225,7 @@ pub async fn create_api_key(
             ApiKeyEnvironment::Test => "test".to_string(),
         },
         expires_at: generated.expires_at.map(|d| d.to_rfc3339()),
-        created_at: created_key.created_at.to_rfc3339(),
+        created_at: generated.created_at.to_rfc3339(),
     }))
 }
 
@@ -260,7 +235,7 @@ pub async fn delete_api_key(
     Extension(auth_user): Extension<AuthUser>,
     Path(key_id): Path<Uuid>,
 ) -> Result<StatusCode, ApiKeyHandlerError> {
-    let api_key_manager = ApiKeyManager::new(state.db.clone(), state.jwt_config.secret())?;
+    let api_key_manager = ApiKeyManager::new(state.db.clone(), &state.api_key_secret)?;
 
     // Verify the key exists and belongs to the user — propagate DB errors (S9-25)
     let key = api_key_manager
@@ -287,7 +262,17 @@ pub async fn revoke_api_key(
     Path(key_id): Path<Uuid>,
     Json(req): Json<RevokeApiKeyRequest>,
 ) -> Result<StatusCode, ApiKeyHandlerError> {
-    let api_key_manager = ApiKeyManager::new(state.db.clone(), state.jwt_config.secret())?;
+    // Validate revocation reason length (S9-R2-23)
+    if let Some(ref reason) = req.reason {
+        if reason.len() > MAX_REVOKE_REASON_LENGTH {
+            return Err(ApiKeyHandlerError::Validation(format!(
+                "Revocation reason must be less than {} characters",
+                MAX_REVOKE_REASON_LENGTH
+            )));
+        }
+    }
+
+    let api_key_manager = ApiKeyManager::new(state.db.clone(), &state.api_key_secret)?;
 
     // Verify the key belongs to the user — propagate DB errors (S9-25)
     let key = api_key_manager
@@ -312,17 +297,21 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_environment_from_prefix() {
-        assert_eq!(environment_from_prefix("pii_live_abc123"), "live");
-        assert_eq!(environment_from_prefix("pii_test_xyz789"), "test");
-        assert_eq!(environment_from_prefix("pii_unknown_abc"), "live");
-        assert_eq!(environment_from_prefix("invalid"), "live");
-    }
-
-    #[test]
     fn test_expires_days_bounds() {
         // Verify constants are sensible at compile-time
         const _: () = assert!(MIN_EXPIRES_DAYS > 0);
         const _: () = assert!(MAX_EXPIRES_DAYS <= 365);
+    }
+
+    #[test]
+    fn test_key_name_length_limit() {
+        const _: () = assert!(MAX_KEY_NAME_LENGTH > 0);
+        const _: () = assert!(MAX_KEY_NAME_LENGTH <= 255);
+    }
+
+    #[test]
+    fn test_revoke_reason_length_limit() {
+        const _: () = assert!(MAX_REVOKE_REASON_LENGTH > 0);
+        const _: () = assert!(MAX_REVOKE_REASON_LENGTH <= 1000);
     }
 }

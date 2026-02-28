@@ -87,8 +87,8 @@ impl IntoResponse for AuthHandlerError {
     }
 }
 
-/// User registration request
-#[derive(Debug, Deserialize)]
+/// User registration request (no Debug to prevent password leaks in logs)
+#[derive(Deserialize)]
 pub struct RegisterRequest {
     pub email: String,
     pub password: String,
@@ -96,8 +96,8 @@ pub struct RegisterRequest {
     pub company_name: Option<String>,
 }
 
-/// User login request
-#[derive(Debug, Deserialize)]
+/// User login request (no Debug to prevent password leaks in logs)
+#[derive(Deserialize)]
 pub struct LoginRequest {
     pub email: String,
     pub password: String,
@@ -112,8 +112,8 @@ pub struct UpdateUserRequest {
     pub company_name: Option<String>,
 }
 
-/// Change password request
-#[derive(Debug, Deserialize)]
+/// Change password request (no Debug to prevent password leaks in logs)
+#[derive(Deserialize)]
 pub struct ChangePasswordRequest {
     pub current_password: String,
     pub new_password: String,
@@ -368,11 +368,13 @@ pub async fn change_password(
         return Err(AuthHandlerError::Validation(e.to_string()));
     }
 
-    // Get current password hash
-    let row = sqlx::query_as::<_, (String,)>("SELECT password_hash FROM users WHERE id = $1")
-        .bind(auth_user.user_id)
-        .fetch_optional(state.db.pool())
-        .await?;
+    // Get current password hash (S9-R2-02: exclude soft-deleted users)
+    let row = sqlx::query_as::<_, (String,)>(
+        "SELECT password_hash FROM users WHERE id = $1 AND deleted_at IS NULL",
+    )
+    .bind(auth_user.user_id)
+    .fetch_optional(state.db.pool())
+    .await?;
 
     let (current_hash,) = match row {
         Some(r) => r,

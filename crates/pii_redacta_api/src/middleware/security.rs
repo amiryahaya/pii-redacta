@@ -51,6 +51,12 @@ pub async fn security_headers(mut response: Response<Body>) -> Response<Body> {
         HeaderValue::from_static("accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()"),
     );
 
+    // HSTS: Enforce HTTPS (1 year, include subdomains) (S9-R2-18)
+    headers.insert(
+        "strict-transport-security",
+        HeaderValue::from_static("max-age=31536000; includeSubDomains"),
+    );
+
     response
 }
 

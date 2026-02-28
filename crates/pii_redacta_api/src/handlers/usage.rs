@@ -85,7 +85,8 @@ pub async fn get_usage_stats(
 
     // Get current month file count
     let now = Utc::now();
-    let month_start = chrono::NaiveDate::from_ymd_opt(now.year(), now.month(), 1).unwrap();
+    let month_start = chrono::NaiveDate::from_ymd_opt(now.year(), now.month(), 1)
+        .expect("current date always yields a valid first-of-month");
     let monthly_files = sqlx::query_scalar::<_, i64>(
         r#"
         SELECT COUNT(*) FROM usage_logs 
@@ -99,14 +100,16 @@ pub async fn get_usage_stats(
     .fetch_one(state.db.pool())
     .await?;
 
-    // Get user's tier limit
+    // Get user's tier limit (S9-R2-08: ORDER BY + LIMIT 1)
     let monthly_limit = sqlx::query_scalar::<_, Option<i32>>(
         r#"
         SELECT (t.limits->>'max_files_per_month')::int
         FROM subscriptions s
         JOIN tiers t ON s.tier_id = t.id
-        WHERE s.user_id = $1 
+        WHERE s.user_id = $1
         AND s.status IN ('trial', 'active', 'past_due')
+        ORDER BY s.created_at DESC
+        LIMIT 1
         "#,
     )
     .bind(auth_user.user_id)
@@ -189,10 +192,12 @@ pub struct DashboardStatsResponse {
 
 #[derive(Debug, Serialize)]
 pub struct DashboardStatValues {
-    #[serde(rename = "totalRequests")]
-    pub total_requests: i64,
-    #[serde(rename = "totalDocuments")]
-    pub total_documents: i64,
+    /// Current month's request count (S9-R2-19: renamed for accuracy)
+    #[serde(rename = "monthlyRequests")]
+    pub monthly_requests: i64,
+    /// Current month's document count
+    #[serde(rename = "monthlyDocuments")]
+    pub monthly_documents: i64,
     #[serde(rename = "quotaUsage")]
     pub quota_usage: f64,
     #[serde(rename = "documentsChange")]
@@ -230,7 +235,8 @@ pub async fn get_dashboard_stats(
     Extension(auth_user): Extension<AuthUser>,
 ) -> Result<Json<DashboardStatsResponse>, UsageError> {
     let now = Utc::now();
-    let current_month_start = chrono::NaiveDate::from_ymd_opt(now.year(), now.month(), 1).unwrap();
+    let current_month_start = chrono::NaiveDate::from_ymd_opt(now.year(), now.month(), 1)
+        .expect("current date always yields a valid first-of-month");
     let prev_month_start = current_month_start - Months::new(1);
 
     // Current month totals
@@ -264,13 +270,15 @@ pub async fn get_dashboard_stats(
     .fetch_one(state.db.pool())
     .await?;
 
-    // Quota from tier (max_files_per_month is the JSONB key in seed data)
+    // Quota from tier (S9-R2-08: ORDER BY + LIMIT 1)
     let monthly_limit = sqlx::query_scalar::<_, Option<i64>>(
         r#"
         SELECT (t.limits->>'max_files_per_month')::bigint
         FROM subscriptions s
         JOIN tiers t ON s.tier_id = t.id
         WHERE s.user_id = $1 AND s.status IN ('trial', 'active', 'past_due')
+        ORDER BY s.created_at DESC
+        LIMIT 1
         "#,
     )
     .bind(auth_user.user_id)
@@ -362,8 +370,8 @@ pub async fn get_dashboard_stats(
 
     Ok(Json(DashboardStatsResponse {
         stats: DashboardStatValues {
-            total_requests: current.0,
-            total_documents: current.1,
+            monthly_requests: current.0,
+            monthly_documents: current.1,
             quota_usage,
             requests_change,
             documents_change,
@@ -379,8 +387,13 @@ pub async fn get_dashboard_stats(
 /// Usage summary response (lightweight)
 #[derive(Debug, Serialize)]
 pub struct UsageSummaryResponse {
-    pub total_requests: i64,
-    pub total_documents: i64,
+    /// Current month's request count (S9-R2-19: renamed for accuracy)
+    #[serde(rename = "monthlyRequests")]
+    pub monthly_requests: i64,
+    /// Current month's document count
+    #[serde(rename = "monthlyDocuments")]
+    pub monthly_documents: i64,
+    #[serde(rename = "quotaUsage")]
     pub quota_usage: f64,
 }
 
@@ -390,7 +403,8 @@ pub async fn get_usage_summary(
     Extension(auth_user): Extension<AuthUser>,
 ) -> Result<Json<UsageSummaryResponse>, UsageError> {
     let now = Utc::now();
-    let month_start = chrono::NaiveDate::from_ymd_opt(now.year(), now.month(), 1).unwrap();
+    let month_start = chrono::NaiveDate::from_ymd_opt(now.year(), now.month(), 1)
+        .expect("current date always yields a valid first-of-month");
 
     let current = sqlx::query_as::<_, (i64, i64)>(
         r#"
@@ -406,12 +420,15 @@ pub async fn get_usage_summary(
     .fetch_one(state.db.pool())
     .await?;
 
+    // S9-R2-08: ORDER BY + LIMIT 1
     let monthly_limit = sqlx::query_scalar::<_, Option<i64>>(
         r#"
         SELECT (t.limits->>'max_files_per_month')::bigint
         FROM subscriptions s
         JOIN tiers t ON s.tier_id = t.id
         WHERE s.user_id = $1 AND s.status IN ('trial', 'active', 'past_due')
+        ORDER BY s.created_at DESC
+        LIMIT 1
         "#,
     )
     .bind(auth_user.user_id)
@@ -425,8 +442,8 @@ pub async fn get_usage_summary(
     };
 
     Ok(Json(UsageSummaryResponse {
-        total_requests: current.0,
-        total_documents: current.1,
+        monthly_requests: current.0,
+        monthly_documents: current.1,
         quota_usage,
     }))
 }

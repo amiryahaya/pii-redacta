@@ -20,7 +20,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 error!(error = %e, "Configuration validation failed");
                 return Err(e.into());
             }
-            info!(config = ?cfg, "Configuration loaded successfully");
+            info!(
+                host = %cfg.server.host,
+                port = cfg.server.port,
+                db_max_connections = cfg.database.max_connections,
+                "Configuration loaded successfully"
+            );
             cfg
         }
         Err(e) => {
@@ -57,14 +62,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Create application router
-    let app =
-        match create_app_with_auth(db.clone(), &config.jwt.secret, Some(config.cors_origins())) {
-            Ok(router) => router,
-            Err(e) => {
-                error!(error = %e, "Failed to create application router");
-                return Err(e.into());
-            }
-        };
+    let app = match create_app_with_auth(
+        db.clone(),
+        &config.jwt.secret,
+        &config.api_key.secret,
+        Some(config.cors_origins()),
+    ) {
+        Ok(router) => router,
+        Err(e) => {
+            error!(error = %e, "Failed to create application router");
+            return Err(e.into());
+        }
+    };
 
     // Bind to address
     let addr = config.server_addr()?;

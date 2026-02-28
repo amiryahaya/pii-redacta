@@ -59,15 +59,19 @@ async fn test_create_api_key_success() {
 
     let response = app.oneshot(request).await.unwrap();
 
-    // Note: This endpoint might not be implemented yet in the router
-    // The test documents expected behavior
-    if response.status() == StatusCode::OK {
-        let body = parse_json_response(response).await;
-        assert!(body.get("full_key").is_some());
-        assert!(body.get("id").is_some());
-        assert_eq!(body["name"], "Test API Key");
-        assert_eq!(body["environment"], "test");
-    }
+    assert_eq!(
+        response.status(),
+        StatusCode::OK,
+        "Expected 200 OK for API key creation"
+    );
+    let body = parse_json_response(response).await;
+    assert!(
+        body.get("full_key").is_some(),
+        "Response should contain full_key"
+    );
+    assert!(body.get("id").is_some(), "Response should contain id");
+    assert_eq!(body["name"], "Test API Key");
+    assert_eq!(body["environment"], "test");
 
     // Clean up
     fixtures::cleanup_test_data(&db, &[user_id]).await;

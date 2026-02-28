@@ -206,6 +206,15 @@ pub struct ApiKey {
     pub revoked_reason: Option<String>,
 
     pub created_at: DateTime<Utc>,
+
+    /// Environment: "live" or "test"
+    #[sqlx(default)]
+    #[serde(default = "default_environment")]
+    pub environment: String,
+}
+
+fn default_environment() -> String {
+    "live".to_string()
 }
 
 // ============================================

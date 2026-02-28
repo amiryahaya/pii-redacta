@@ -34,6 +34,8 @@ use tracing::Level;
 pub struct AppState {
     pub db: Arc<pii_redacta_core::db::Database>,
     pub jwt_config: JwtConfig,
+    /// Base64-encoded server secret for API key HMAC (separate from JWT secret)
+    pub api_key_secret: String,
 }
 
 /// Create the API router (MVP version without auth)
@@ -83,12 +85,14 @@ pub fn create_app() -> Router {
 pub fn create_app_with_auth(
     db: Arc<pii_redacta_core::db::Database>,
     jwt_secret: &str,
+    api_key_secret: &str,
     cors_origins: Option<Vec<String>>,
 ) -> Result<Router, jwt::JwtError> {
     let jwt_config = JwtConfig::new(jwt_secret, 24)?;
     let state = AppState {
         db,
         jwt_config: jwt_config.clone(),
+        api_key_secret: api_key_secret.to_string(),
     };
 
     // Protected routes — require valid JWT token

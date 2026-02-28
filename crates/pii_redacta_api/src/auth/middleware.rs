@@ -107,13 +107,15 @@ pub async fn ip_rate_limit_middleware(
         .unwrap_or_else(|| "unknown".to_string());
 
     // Apply IP rate limit (10 requests per hour for unauthenticated)
+    // Fail closed: if Redis is down, reject the request (S9-R2-03)
     match state.rate_limiter.check_ip_limit(&ip, 10).await {
         Ok(super::rate_limit::RateLimitResult::Allowed) => {}
         Ok(super::rate_limit::RateLimitResult::RetryAfter(_)) => {
             return Err(AuthError::RateLimitExceeded);
         }
         Err(e) => {
-            tracing::warn!("IP rate limiter error: {}", e);
+            tracing::error!("IP rate limiter error (failing closed): {}", e);
+            return Err(AuthError::RateLimitExceeded);
         }
     }
 
@@ -128,8 +130,10 @@ async fn get_user_info(
     // Get user's subscription tier
     let subscription = sqlx::query_as::<_, (uuid::Uuid,)>(
         r#"
-        SELECT tier_id FROM subscriptions 
+        SELECT tier_id FROM subscriptions
         WHERE user_id = $1 AND status IN ('trial', 'active', 'past_due')
+        ORDER BY created_at DESC
+        LIMIT 1
         "#,
     )
     .bind(user_id)

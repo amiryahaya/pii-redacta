@@ -33,6 +33,9 @@ pub fn test_server_secret() -> String {
 }
 
 /// Create a test database connection
+///
+/// Note: Migrations must be applied before running integration tests.
+/// Use `./scripts/pods.sh migrate` or `sqlx migrate run`.
 pub async fn setup_db() -> Arc<Database> {
     let db = Database::new(&database_url())
         .await
@@ -43,13 +46,15 @@ pub async fn setup_db() -> Arc<Database> {
 /// Create a test app with authentication
 pub async fn setup_app() -> Router {
     let db = setup_db().await;
-    create_app_with_auth(db, &test_jwt_secret(), None).expect("Failed to create test app")
+    create_app_with_auth(db, &test_jwt_secret(), &test_server_secret(), None)
+        .expect("Failed to create test app")
 }
 
 /// Create a test app with specific CORS origins
 pub async fn setup_app_with_cors(origins: Vec<String>) -> Router {
     let db = setup_db().await;
-    create_app_with_auth(db, &test_jwt_secret(), Some(origins)).expect("Failed to create test app")
+    create_app_with_auth(db, &test_jwt_secret(), &test_server_secret(), Some(origins))
+        .expect("Failed to create test app")
 }
 
 /// Test context that manages database state and cleanup

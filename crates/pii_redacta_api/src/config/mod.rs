@@ -26,6 +26,9 @@ pub struct Config {
     /// Rate limiting configuration
     #[serde(default)]
     pub rate_limit: RateLimitConfig,
+    /// API key configuration
+    #[serde(default)]
+    pub api_key: ApiKeyConfig,
 }
 
 /// Server configuration
@@ -224,6 +227,28 @@ impl Default for RateLimitConfig {
         Self {
             requests_per_minute: default_requests_per_minute(),
             ip_requests_per_hour: default_ip_requests_per_hour(),
+        }
+    }
+}
+
+/// API key HMAC configuration
+#[derive(Debug, Clone, Deserialize)]
+pub struct ApiKeyConfig {
+    /// Base64-encoded server secret for API key HMAC (minimum 32 bytes decoded)
+    /// Generate with: openssl rand -base64 32
+    #[serde(default = "default_api_key_secret")]
+    pub secret: String,
+}
+
+fn default_api_key_secret() -> String {
+    // Default for development only — MUST be overridden in production
+    "dGVzdC1zZWNyZXQtMzItYnl0ZXMtbG9uZy1rZXktZm9yLWhtYWM=".to_string()
+}
+
+impl Default for ApiKeyConfig {
+    fn default() -> Self {
+        Self {
+            secret: default_api_key_secret(),
         }
     }
 }

@@ -78,6 +78,8 @@ impl std::str::FromStr for ApiKeyEnvironment {
 /// A generated API key (plaintext) - only returned once at creation
 #[derive(Debug, Clone)]
 pub struct GeneratedApiKey {
+    /// Database-assigned ID
+    pub id: Uuid,
     /// The full API key to show to the user (ONE TIME ONLY)
     pub full_key: String,
     /// Environment (live/test)
@@ -88,6 +90,8 @@ pub struct GeneratedApiKey {
     pub user_id: Uuid,
     /// Expiration date (if any)
     pub expires_at: Option<chrono::DateTime<Utc>>,
+    /// Creation timestamp
+    pub created_at: chrono::DateTime<Utc>,
 }
 
 /// API Key validation result
@@ -173,33 +177,36 @@ impl ApiKeyManager {
         // Hash the full key with HMAC-SHA256
         let key_hash = self.hash_key(&full_key)?;
 
-        // Store in database
-        sqlx::query_as::<_, ApiKey>(
+        // Store in database (includes environment column)
+        let api_key = sqlx::query_as::<_, ApiKey>(
             r#"
             INSERT INTO api_keys (
-                user_id, key_prefix, key_hash, name, 
-                expires_at, is_active, created_at
-            ) VALUES ($1, $2, $3, $4, $5, true, NOW())
-            RETURNING 
+                user_id, key_prefix, key_hash, name,
+                environment, expires_at, is_active, created_at
+            ) VALUES ($1, $2, $3, $4, $5, $6, true, NOW())
+            RETURNING
                 id, user_id, key_prefix, key_hash, name,
                 last_used_at, expires_at, is_active, revoked_at,
-                revoked_reason, created_at
+                revoked_reason, created_at, environment
             "#,
         )
         .bind(user_id)
         .bind(prefix)
         .bind(&key_hash)
         .bind(name)
+        .bind(environment.as_str())
         .bind(expires_at)
         .fetch_one(self.db.pool())
         .await?;
 
         Ok(GeneratedApiKey {
+            id: api_key.id,
             full_key,
             environment,
             prefix: prefix.to_string(),
             user_id,
             expires_at,
+            created_at: api_key.created_at,
         })
     }
 
@@ -227,10 +234,10 @@ impl ApiKeyManager {
         // Look up key by hash
         let db_key = sqlx::query_as::<_, ApiKey>(
             r#"
-            SELECT 
+            SELECT
                 id, user_id, key_prefix, key_hash, name,
                 last_used_at, expires_at, is_active, revoked_at,
-                revoked_reason, created_at
+                revoked_reason, created_at, environment
             FROM api_keys 
             WHERE key_hash = $1 AND is_active = true
             "#,
@@ -270,10 +277,10 @@ impl ApiKeyManager {
 
         let db_key = sqlx::query_as::<_, ApiKey>(
             r#"
-            SELECT 
+            SELECT
                 id, user_id, key_prefix, key_hash, name,
                 last_used_at, expires_at, is_active, revoked_at,
-                revoked_reason, created_at
+                revoked_reason, created_at, environment
             FROM api_keys 
             WHERE key_hash = $1 AND is_active = true
             "#,
@@ -306,10 +313,10 @@ impl ApiKeyManager {
     pub async fn list_user_keys(&self, user_id: Uuid) -> Result<Vec<ApiKey>> {
         let keys = sqlx::query_as::<_, ApiKey>(
             r#"
-            SELECT 
+            SELECT
                 id, user_id, key_prefix, key_hash, name,
                 last_used_at, expires_at, is_active, revoked_at,
-                revoked_reason, created_at
+                revoked_reason, created_at, environment
             FROM api_keys 
             WHERE user_id = $1 AND is_active = true
             ORDER BY created_at DESC
@@ -349,10 +356,10 @@ impl ApiKeyManager {
             UPDATE api_keys 
             SET is_active = false, revoked_at = NOW(), revoked_reason = $1
             WHERE id = $2 AND user_id = $3 AND is_active = true
-            RETURNING 
+            RETURNING
                 id, user_id, key_prefix, key_hash, name,
                 last_used_at, expires_at, is_active, revoked_at,
-                revoked_reason, created_at
+                revoked_reason, created_at, environment
             "#,
         )
         .bind(reason)
@@ -368,10 +375,10 @@ impl ApiKeyManager {
     pub async fn get_key(&self, key_id: Uuid, user_id: Uuid) -> Result<ApiKey> {
         let key = sqlx::query_as::<_, ApiKey>(
             r#"
-            SELECT 
+            SELECT
                 id, user_id, key_prefix, key_hash, name,
                 last_used_at, expires_at, is_active, revoked_at,
-                revoked_reason, created_at
+                revoked_reason, created_at, environment
             FROM api_keys 
             WHERE id = $1 AND user_id = $2
             "#,
