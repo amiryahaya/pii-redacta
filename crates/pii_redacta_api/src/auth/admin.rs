@@ -36,7 +36,9 @@ pub async fn admin_auth_middleware(
 
     let user_id = auth_user.user_id;
 
-    // Check Redis cache first (only positive results are cached — M5)
+    // Check Redis cache first (only positive results are cached — M5).
+    // Note: cached positive results have a 60s TTL, so admin demotion takes up to
+    // 60 seconds to take effect. This is acceptable for the admin use case.
     let is_admin = if let Some(ref redis) = state.redis {
         let cache_key = format!("admin:{}", user_id);
         match redis.get_i64(&cache_key).await {
@@ -76,12 +78,21 @@ pub async fn admin_auth_middleware(
 }
 
 /// Query database for admin status.
+///
+/// Fails closed: DB errors or missing users return `false` (deny admin access).
 async fn check_admin_in_db(state: &AppState, user_id: uuid::Uuid) -> bool {
-    sqlx::query_scalar::<_, bool>("SELECT is_admin FROM users WHERE id = $1 AND deleted_at IS NULL")
-        .bind(user_id)
-        .fetch_optional(state.db.pool())
-        .await
-        .ok()
-        .flatten()
-        .unwrap_or(false)
+    match sqlx::query_scalar::<_, bool>(
+        "SELECT is_admin FROM users WHERE id = $1 AND deleted_at IS NULL",
+    )
+    .bind(user_id)
+    .fetch_optional(state.db.pool())
+    .await
+    {
+        Ok(Some(is_admin)) => is_admin,
+        Ok(None) => false, // User not found or soft-deleted
+        Err(e) => {
+            tracing::warn!(error = %e, user_id = %user_id, "DB error checking admin status, failing closed");
+            false
+        }
+    }
 }

@@ -29,6 +29,7 @@ pub use extractors::{
 };
 pub mod admin;
 
+#[allow(deprecated)]
 pub use middleware::{
     api_auth_middleware, ip_rate_limit_middleware, jwt_auth_middleware,
     jwt_auth_middleware_with_state, simple_auth_middleware, RequestAuthExt,

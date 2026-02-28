@@ -926,7 +926,10 @@ async fn test_change_password_wrong_current() {
 // Token Invalidation After Password Change Tests (H1)
 // ============================================================================
 
-/// H1: Old token should be rejected after password change (without Redis, uses DB fallback)
+/// H1: Old token should be rejected after password change (without Redis, uses DB fallback).
+/// Note: These integration tests run without Redis, so only the DB fallback path for
+/// token invalidation is exercised. The Redis fast path (`pw_changed:{user_id}`) is
+/// tested implicitly via the middleware logic but not in an end-to-end context here.
 #[tokio::test]
 async fn test_old_token_rejected_after_password_change() {
     let app = setup_app().await;
@@ -1140,7 +1143,9 @@ async fn test_non_admin_rejected_from_admin_route() {
     fixtures::cleanup_test_data(&db, &[user_id]).await;
 }
 
-/// H2: Admin users should access admin routes
+/// H2: Admin users should access admin routes — proves DB verification by using
+/// a JWT token with is_admin=false while DB has is_admin=true. The middleware
+/// should check the DB (not the JWT claim) and grant access.
 #[tokio::test]
 async fn test_admin_user_accesses_admin_route() {
     let app = setup_app().await;
@@ -1152,16 +1157,16 @@ async fn test_admin_user_accesses_admin_route() {
         .await
         .expect("Failed to create user");
 
-    // Promote to admin
+    // Promote to admin in DB
     sqlx::query("UPDATE users SET is_admin = true WHERE id = $1")
         .bind(user_id)
         .execute(db.pool())
         .await
         .expect("Failed to promote user to admin");
 
-    // Generate admin token
+    // Generate token with is_admin=FALSE in JWT — the middleware should check DB, not JWT
     let config = JwtConfig::new(test_jwt_secret(), 24).expect("Valid JWT config");
-    let token = generate_token(user_id, &email, true, &config).expect("Should generate token");
+    let token = generate_token(user_id, &email, false, &config).expect("Should generate token");
 
     let request = Request::builder()
         .uri("/api/v1/admin/stats")
@@ -1174,7 +1179,7 @@ async fn test_admin_user_accesses_admin_route() {
     assert_eq!(
         response.status(),
         StatusCode::OK,
-        "Admin should access admin routes"
+        "Admin middleware should verify against DB, not JWT claim"
     );
 
     let body = parse_json_response(response).await;

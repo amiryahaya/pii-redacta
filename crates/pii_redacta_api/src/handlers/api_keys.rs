@@ -363,25 +363,24 @@ mod tests {
 
     #[test]
     fn test_environment_parsing() {
-        // Test the same match logic used in create_api_key handler (line ~198)
-        fn parse_env(s: &str) -> Option<ApiKeyEnvironment> {
-            match s {
-                "live" => Some(ApiKeyEnvironment::Live),
-                "test" => Some(ApiKeyEnvironment::Test),
-                _ => None,
-            }
-        }
+        use std::str::FromStr;
 
-        // Valid environments
-        assert!(matches!(parse_env("live"), Some(ApiKeyEnvironment::Live)));
-        assert!(matches!(parse_env("test"), Some(ApiKeyEnvironment::Test)));
+        // Test via ApiKeyEnvironment::from_str — the same parsing the handler relies on
+        assert!(matches!(
+            ApiKeyEnvironment::from_str("live"),
+            Ok(ApiKeyEnvironment::Live)
+        ));
+        assert!(matches!(
+            ApiKeyEnvironment::from_str("test"),
+            Ok(ApiKeyEnvironment::Test)
+        ));
 
-        // Invalid environments should return None
-        assert!(parse_env("staging").is_none());
-        assert!(parse_env("production").is_none());
-        assert!(parse_env("").is_none());
-        assert!(parse_env("LIVE").is_none()); // case-sensitive
-        assert!(parse_env("TEST").is_none());
+        // Invalid environments should fail
+        assert!(ApiKeyEnvironment::from_str("staging").is_err());
+        assert!(ApiKeyEnvironment::from_str("production").is_err());
+        assert!(ApiKeyEnvironment::from_str("").is_err());
+        assert!(ApiKeyEnvironment::from_str("LIVE").is_err()); // case-sensitive
+        assert!(ApiKeyEnvironment::from_str("TEST").is_err());
     }
 
     #[test]
@@ -407,6 +406,12 @@ mod tests {
             ),
             (
                 ApiKeyHandlerError::Database(sqlx::Error::RowNotFound),
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            ),
+            (
+                ApiKeyHandlerError::ApiKeyManager(
+                    pii_redacta_core::db::api_key_manager::ApiKeyError::NotFound,
+                ),
                 axum::http::StatusCode::INTERNAL_SERVER_ERROR,
             ),
         ];

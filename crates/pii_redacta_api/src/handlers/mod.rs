@@ -10,7 +10,11 @@ pub mod subscription;
 pub mod upload;
 pub mod usage;
 
-use axum::{extract::State, Json};
+use axum::{
+    extract::{Extension, State},
+    response::IntoResponse,
+    Json,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -26,8 +30,11 @@ pub struct AdminStatsResponse {
 
 /// Admin-only stats handler — returns basic system statistics.
 /// Protected by admin middleware (S12-2c).
+/// Extracts `AdminUser` to prove admin middleware ran — the value itself is unused
+/// but its presence ensures the middleware inserted it.
 pub async fn admin_stats(
     State(state): State<crate::AppState>,
+    Extension(_admin): Extension<crate::extractors::AdminUser>,
 ) -> Result<Json<AdminStatsResponse>, axum::response::Response> {
     let total_users =
         sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM users WHERE deleted_at IS NULL")
@@ -63,8 +70,6 @@ fn admin_error_response() -> axum::response::Response {
     });
     (axum::http::StatusCode::INTERNAL_SERVER_ERROR, Json(body)).into_response()
 }
-
-use axum::response::IntoResponse;
 
 /// Job status
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

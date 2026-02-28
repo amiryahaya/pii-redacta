@@ -357,12 +357,14 @@ async fn login_rate_limit_middleware(
         // Have ConnectInfo and it's not a trusted proxy — use it directly, ignore XFF
         connect_ip.map(|ip| ip.to_string())
     } else {
-        // No ConnectInfo (e.g., test env) — fall back to XFF leftmost as last resort
+        // No ConnectInfo (e.g., test env) — fall back to XFF leftmost as last resort.
+        // Parse as IpAddr to reject garbage values.
         req.headers()
             .get("x-forwarded-for")
             .and_then(|v| v.to_str().ok())
             .and_then(|s| s.split(',').next())
-            .map(|s| s.trim().to_string())
+            .and_then(|s| s.trim().parse::<std::net::IpAddr>().ok())
+            .map(|ip| ip.to_string())
     };
 
     if let Some(ref ip) = ip {
@@ -564,5 +566,31 @@ mod xff_tests {
         // Right-to-left: skip 10.0.0.1 (trusted), skip "garbage" (non-parseable), return 1.2.3.4
         let ip = extract_client_ip_from_xff(&headers, &trusted);
         assert_eq!(ip, Some("1.2.3.4".to_string()));
+    }
+
+    /// L6: Bracketed IPv6 (e.g., "[::1]") is not valid IpAddr format — should be skipped
+    #[test]
+    fn test_xff_bracketed_ipv6_skipped() {
+        let trusted: Vec<std::net::IpAddr> = vec![];
+        let mut headers = HeaderMap::new();
+        headers.insert("x-forwarded-for", "[::1], 1.2.3.4".parse().unwrap());
+
+        // "[::1]" is not parseable as IpAddr (brackets are for socket addrs), so skipped.
+        // Right-to-left: 1.2.3.4 is valid and untrusted → returned.
+        let ip = extract_client_ip_from_xff(&headers, &trusted);
+        assert_eq!(ip, Some("1.2.3.4".to_string()));
+    }
+
+    /// L6: Port-suffixed IPs (e.g., "1.2.3.4:8080") are not valid IpAddr — should be skipped
+    #[test]
+    fn test_xff_port_suffixed_skipped() {
+        let trusted: Vec<std::net::IpAddr> = vec![];
+        let mut headers = HeaderMap::new();
+        headers.insert("x-forwarded-for", "1.2.3.4:8080, 5.6.7.8".parse().unwrap());
+
+        // "1.2.3.4:8080" is not parseable as IpAddr → skipped.
+        // Right-to-left: 5.6.7.8 is valid and untrusted → returned.
+        let ip = extract_client_ip_from_xff(&headers, &trusted);
+        assert_eq!(ip, Some("5.6.7.8".to_string()));
     }
 }

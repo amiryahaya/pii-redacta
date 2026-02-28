@@ -198,10 +198,11 @@ use crate::extractors::AuthUser;
 use crate::jwt::{validate_token, JwtConfig};
 use crate::AppState;
 
-/// JWT authentication middleware for portal routes
+/// JWT authentication middleware for portal routes (DEPRECATED).
 ///
-/// This middleware validates JWT tokens for browser-based authentication.
-/// It's separate from API key middleware which is for programmatic access.
+/// Use [`jwt_auth_middleware_with_state`] instead — it validates tokens against
+/// `password_changed_at` and rejects tokens for soft-deleted users (S12-1d).
+#[deprecated(note = "Use jwt_auth_middleware_with_state which checks password_changed_at")]
 pub async fn jwt_auth_middleware(
     jwt_config: JwtConfig,
     mut request: Request,
@@ -318,7 +319,12 @@ async fn check_password_changed_at_db(state: &AppState, user_id: uuid::Uuid, iat
 
     match result {
         Ok(Some((Some(pw_changed_at),))) => iat <= pw_changed_at.timestamp(),
-        Ok(Some((None,))) | Ok(None) => false,
+        Ok(Some((None,))) => false, // User exists, no password change recorded
+        Ok(None) => {
+            // User not found (soft-deleted or non-existent) — reject token
+            tracing::warn!(user_id = %user_id, "User not found in DB during token validation, rejecting");
+            true
+        }
         Err(e) => {
             tracing::warn!(error = %e, user_id = %user_id, "DB error checking password_changed_at, failing closed");
             true

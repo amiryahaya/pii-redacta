@@ -402,13 +402,18 @@ pub async fn change_password(
 
     // Update password and password_changed_at timestamp (S12-1b)
     // Use RETURNING to get the DB timestamp for Redis (avoids clock skew — M1)
-    let (pw_changed_at,) = sqlx::query_as::<_, (chrono::DateTime<Utc>,)>(
-        "UPDATE users SET password_hash = $1, password_changed_at = NOW(), updated_at = NOW() WHERE id = $2 RETURNING password_changed_at",
+    let row = sqlx::query_as::<_, (chrono::DateTime<Utc>,)>(
+        "UPDATE users SET password_hash = $1, password_changed_at = NOW(), updated_at = NOW() WHERE id = $2 AND deleted_at IS NULL RETURNING password_changed_at",
     )
     .bind(&new_hash)
     .bind(auth_user.user_id)
-    .fetch_one(state.db.pool())
+    .fetch_optional(state.db.pool())
     .await?;
+
+    let (pw_changed_at,) = match row {
+        Some(r) => r,
+        None => return Err(AuthHandlerError::UserNotFound),
+    };
 
     // Fire-and-forget: set Redis key for fast token invalidation (S12-1b)
     // TTL derived from JWT expiration to match token lifetime (L1)
@@ -698,6 +703,10 @@ mod tests {
 
     #[test]
     fn test_email_normalization_unicode() {
+        // Note: Unicode emails are rejected by validate_email()'s ASCII-only regex,
+        // so these paths are unreachable in production. These tests verify that
+        // normalize_email() itself handles Unicode correctly should the regex change.
+
         // ASCII uppercasing
         assert_eq!(normalize_email("USER@EXAMPLE.COM"), "user@example.com");
         // Unicode whitespace trimming (trim() handles non-ASCII whitespace)
@@ -757,6 +766,10 @@ mod tests {
             ),
             (
                 AuthHandlerError::Database(sqlx::Error::RowNotFound),
+                StatusCode::INTERNAL_SERVER_ERROR,
+            ),
+            (
+                AuthHandlerError::Jwt(crate::jwt::JwtError::CreationFailed),
                 StatusCode::INTERNAL_SERVER_ERROR,
             ),
         ];
