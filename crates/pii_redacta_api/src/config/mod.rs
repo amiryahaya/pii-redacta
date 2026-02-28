@@ -46,6 +46,11 @@ pub struct ServerConfig {
     /// Maximum request body size in bytes
     #[serde(default = "default_max_body_size")]
     pub max_body_size: usize,
+    /// Comma-separated list of trusted proxy IP addresses (S12-3a).
+    /// When set, X-Forwarded-For is only trusted from these IPs.
+    /// Example: "10.0.0.1,10.0.0.2"
+    #[serde(default)]
+    pub trusted_proxies: String,
 }
 
 fn default_host() -> String {
@@ -71,7 +76,33 @@ impl Default for ServerConfig {
             port: default_port(),
             timeout_seconds: default_timeout(),
             max_body_size: default_max_body_size(),
+            trusted_proxies: String::new(),
         }
+    }
+}
+
+impl ServerConfig {
+    /// Parse the trusted_proxies string into a Vec<IpAddr> (S12-3a).
+    pub fn parse_trusted_proxies(&self) -> Vec<std::net::IpAddr> {
+        if self.trusted_proxies.is_empty() {
+            return Vec::new();
+        }
+        self.trusted_proxies
+            .split(',')
+            .filter_map(|s| {
+                let trimmed = s.trim();
+                if trimmed.is_empty() {
+                    return None;
+                }
+                match trimmed.parse::<std::net::IpAddr>() {
+                    Ok(ip) => Some(ip),
+                    Err(_) => {
+                        tracing::warn!("Invalid trusted proxy IP: {}", trimmed);
+                        None
+                    }
+                }
+            })
+            .collect()
     }
 }
 
@@ -475,6 +506,38 @@ mod tests {
         assert!(debug_output.contains("[redacted]"));
         assert!(!debug_output.contains(&default_jwt_secret()));
         assert!(!debug_output.contains(&default_api_key_secret()));
+    }
+
+    #[test]
+    fn test_config_parses_trusted_proxies() {
+        let config = ServerConfig {
+            trusted_proxies: "10.0.0.1,192.168.1.1".to_string(),
+            ..Default::default()
+        };
+        let proxies = config.parse_trusted_proxies();
+        assert_eq!(proxies.len(), 2);
+        assert_eq!(proxies[0], "10.0.0.1".parse::<std::net::IpAddr>().unwrap());
+        assert_eq!(
+            proxies[1],
+            "192.168.1.1".parse::<std::net::IpAddr>().unwrap()
+        );
+    }
+
+    #[test]
+    fn test_config_parses_empty_trusted_proxies() {
+        let config = ServerConfig::default();
+        let proxies = config.parse_trusted_proxies();
+        assert!(proxies.is_empty());
+    }
+
+    #[test]
+    fn test_config_parses_trusted_proxies_with_spaces() {
+        let config = ServerConfig {
+            trusted_proxies: " 10.0.0.1 , 192.168.1.1 ".to_string(),
+            ..Default::default()
+        };
+        let proxies = config.parse_trusted_proxies();
+        assert_eq!(proxies.len(), 2);
     }
 
     #[test]

@@ -60,7 +60,7 @@ pub struct DailyUsageQuery {
     pub days: i32,
 }
 
-fn default_days() -> i32 {
+pub(crate) fn default_days() -> i32 {
     30
 }
 
@@ -422,12 +422,12 @@ pub struct UsageSummaryQuery {
     pub range: String,
 }
 
-fn default_range() -> String {
+pub(crate) fn default_range() -> String {
     "30d".to_string()
 }
 
 /// Parse a range string like "7d", "30d", "90d" into a number of days
-fn parse_range_days(range: &str) -> i32 {
+pub(crate) fn parse_range_days(range: &str) -> i32 {
     match range {
         "7d" => 7,
         "30d" => 30,
@@ -564,3 +564,7 @@ pub async fn get_usage_summary(
         daily_usage,
     }))
 }
+
+#[cfg(test)]
+#[path = "usage_test.rs"]
+mod tests;

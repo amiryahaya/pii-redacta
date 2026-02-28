@@ -360,4 +360,56 @@ mod tests {
         const _: () = assert!(DEFAULT_PAGE_LIMIT > 0);
         const _: () = assert!(MAX_PAGE_LIMIT >= DEFAULT_PAGE_LIMIT);
     }
+
+    #[test]
+    fn test_environment_parsing() {
+        // Valid environments
+        assert!(matches!("live".parse::<String>().as_deref(), Ok("live")));
+        assert!(matches!("test".parse::<String>().as_deref(), Ok("test")));
+
+        // Simulate the handler's match logic
+        let valid_envs = |s: &str| -> bool { matches!(s, "live" | "test") };
+        assert!(valid_envs("live"));
+        assert!(valid_envs("test"));
+        assert!(!valid_envs("staging"));
+        assert!(!valid_envs("production"));
+        assert!(!valid_envs(""));
+    }
+
+    #[test]
+    fn test_error_response_status_codes() {
+        use axum::response::IntoResponse;
+
+        let cases: Vec<(ApiKeyHandlerError, axum::http::StatusCode)> = vec![
+            (
+                ApiKeyHandlerError::InvalidEnvironment,
+                axum::http::StatusCode::BAD_REQUEST,
+            ),
+            (
+                ApiKeyHandlerError::NotFound,
+                axum::http::StatusCode::NOT_FOUND,
+            ),
+            (
+                ApiKeyHandlerError::MaxKeysReached,
+                axum::http::StatusCode::FORBIDDEN,
+            ),
+            (
+                ApiKeyHandlerError::Validation("test".to_string()),
+                axum::http::StatusCode::BAD_REQUEST,
+            ),
+            (
+                ApiKeyHandlerError::Database(sqlx::Error::RowNotFound),
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            ),
+        ];
+
+        for (error, expected_status) in cases {
+            let response = error.into_response();
+            assert_eq!(
+                response.status(),
+                expected_status,
+                "Unexpected status for error variant"
+            );
+        }
+    }
 }

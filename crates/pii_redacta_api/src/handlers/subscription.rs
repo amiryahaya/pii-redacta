@@ -193,3 +193,7 @@ pub async fn list_tiers(
 
     Ok(Json(tiers))
 }
+
+#[cfg(test)]
+#[path = "subscription_test.rs"]
+mod tests;

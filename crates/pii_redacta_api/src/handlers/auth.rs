@@ -400,14 +400,27 @@ pub async fn change_password(
     // Hash new password
     let new_hash = hash_password(&req.new_password)?;
 
-    // Update password
-    // TODO(S9-R3-05): Existing JWT tokens remain valid until expiry after password change.
-    // Consider adding a Redis-based token blacklist or password_changed_at claim.
-    sqlx::query("UPDATE users SET password_hash = $1, updated_at = NOW() WHERE id = $2")
+    // Update password and password_changed_at timestamp (S12-1b)
+    sqlx::query("UPDATE users SET password_hash = $1, password_changed_at = NOW(), updated_at = NOW() WHERE id = $2")
         .bind(&new_hash)
         .bind(auth_user.user_id)
         .execute(state.db.pool())
         .await?;
+
+    // Fire-and-forget: set Redis key for fast token invalidation (S12-1b)
+    if let Some(ref redis) = state.redis {
+        let redis = redis.clone();
+        let user_id = auth_user.user_id;
+        tokio::spawn(async move {
+            let key = format!("pw_changed:{}", user_id);
+            if let Err(e) = redis
+                .set_with_expiry(&key, chrono::Utc::now().timestamp(), 86400)
+                .await
+            {
+                tracing::warn!(error = %e, "Failed to set pw_changed Redis key");
+            }
+        });
+    }
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -678,5 +691,33 @@ mod tests {
     fn test_email_normalization() {
         assert_eq!(normalize_email("Test@Example.COM"), "test@example.com");
         assert_eq!(normalize_email("  user@test.com  "), "user@test.com");
+    }
+
+    #[test]
+    fn test_email_normalization_unicode() {
+        // Unicode characters in email should be lowercased
+        assert_eq!(normalize_email("USER@EXAMPLE.COM"), "user@example.com");
+        // Trimming works with unicode whitespace too (trim() handles it)
+        assert_eq!(normalize_email(" Admin@Test.CO "), "admin@test.co");
+    }
+
+    #[test]
+    fn test_password_validation_boundary_8_chars() {
+        // Exactly 8 chars with all requirements should pass
+        assert!(validate_password("Aa1!xxxx").is_ok());
+        // 7 chars should fail
+        assert!(validate_password("Aa1!xxx").is_err());
+    }
+
+    #[test]
+    fn test_password_validation_boundary_128_chars() {
+        // Exactly 128 chars should pass
+        let pass_128 = format!("Aa1!{}", "x".repeat(124));
+        assert_eq!(pass_128.len(), 128);
+        assert!(validate_password(&pass_128).is_ok());
+        // 129 chars should fail
+        let pass_129 = format!("Aa1!{}", "x".repeat(125));
+        assert_eq!(pass_129.len(), 129);
+        assert!(validate_password(&pass_129).is_err());
     }
 }

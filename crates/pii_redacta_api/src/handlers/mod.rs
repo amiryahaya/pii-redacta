@@ -10,10 +10,42 @@ pub mod subscription;
 pub mod upload;
 pub mod usage;
 
+use axum::{extract::State, Json};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Mutex;
 use uuid::Uuid;
+
+/// Admin stats response (S12-2c)
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AdminStatsResponse {
+    pub total_users: i64,
+    pub total_api_keys: i64,
+}
+
+/// Admin-only stats handler — returns basic system statistics.
+/// Protected by admin middleware (S12-2c).
+pub async fn admin_stats(
+    State(state): State<crate::AppState>,
+) -> Result<Json<AdminStatsResponse>, axum::http::StatusCode> {
+    let total_users =
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM users WHERE deleted_at IS NULL")
+            .fetch_one(state.db.pool())
+            .await
+            .map_err(|_| axum::http::StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let total_api_keys =
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM api_keys WHERE is_active = true")
+            .fetch_one(state.db.pool())
+            .await
+            .map_err(|_| axum::http::StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    Ok(Json(AdminStatsResponse {
+        total_users,
+        total_api_keys,
+    }))
+}
 
 /// Job status
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

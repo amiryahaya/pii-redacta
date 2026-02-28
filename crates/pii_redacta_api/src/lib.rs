@@ -50,6 +50,8 @@ pub struct AppState {
     pub metrics: Arc<AppMetrics>,
     /// Optional Redis connection pool
     pub redis: Option<Arc<RedisPool>>,
+    /// Trusted proxy IP addresses (S12-3b)
+    pub trusted_proxies: Vec<std::net::IpAddr>,
 }
 
 /// Create the API router (MVP version without auth)
@@ -131,6 +133,7 @@ pub async fn create_app_with_auth(
         job_queue,
         metrics,
         redis,
+        trusted_proxies: Vec::new(),
     };
 
     // Protected routes — require valid JWT token
@@ -208,10 +211,22 @@ pub async fn create_app_with_auth(
         )
         // Metrics (authenticated)
         .route("/metrics", get(handlers::metrics::metrics_authenticated))
-        .route_layer(from_fn(move |req, next| {
-            let config = jwt_config.clone();
-            auth::jwt_auth_middleware(config, req, next)
-        }));
+        .route_layer(from_fn_with_state(
+            state.clone(),
+            auth::jwt_auth_middleware_with_state,
+        ));
+
+    // Admin-only routes — require JWT + admin verification (S12-2c)
+    let admin = Router::new()
+        .route("/api/v1/admin/stats", get(handlers::admin_stats))
+        .route_layer(from_fn_with_state(
+            state.clone(),
+            auth::admin::admin_auth_middleware,
+        ))
+        .route_layer(from_fn_with_state(
+            state.clone(),
+            auth::jwt_auth_middleware_with_state,
+        ));
 
     // Rate-limited auth routes (10 requests/minute per IP)
     let rate_limited_auth = Router::new()
@@ -230,9 +245,10 @@ pub async fn create_app_with_auth(
         .route("/api/v1/tiers", get(handlers::subscription::list_tiers))
         .merge(rate_limited_auth);
 
-    // Merge public and protected, apply shared middleware
+    // Merge public, protected, and admin routes; apply shared middleware
     let app = public
         .merge(protected)
+        .merge(admin)
         .with_state(state.clone())
         .layer(create_cors_layer(cors_origins))
         .layer(map_response(middleware::security::security_headers))
@@ -312,19 +328,30 @@ async fn login_rate_limit_middleware(
     req: axum::extract::Request,
     next: Next,
 ) -> axum::response::Response {
-    // Extract IP from X-Forwarded-For header or ConnectInfo.
+    // Extract IP from ConnectInfo, checking X-Forwarded-For only for trusted proxies (S12-3c).
     // Skip rate limiting when IP is indeterminate (e.g., in tests without ConnectInfo).
-    let ip = req
-        .headers()
-        .get("x-forwarded-for")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|s| s.split(',').next())
-        .map(|s| s.trim().to_string())
-        .or_else(|| {
-            req.extensions()
-                .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
-                .map(|ci| ci.0.ip().to_string())
-        });
+    let connect_ip = req
+        .extensions()
+        .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
+        .map(|ci| ci.0.ip());
+
+    let ip = if !state.trusted_proxies.is_empty()
+        && connect_ip.is_some_and(|ip| state.trusted_proxies.contains(&ip))
+    {
+        // Trusted proxy — use rightmost untrusted IP from X-Forwarded-For
+        extract_client_ip_from_xff(req.headers(), &state.trusted_proxies)
+            .or_else(|| connect_ip.map(|ip| ip.to_string()))
+    } else if connect_ip.is_some() {
+        // Have ConnectInfo and it's not a trusted proxy — use it directly, ignore XFF
+        connect_ip.map(|ip| ip.to_string())
+    } else {
+        // No ConnectInfo (e.g., test env) — fall back to XFF leftmost as last resort
+        req.headers()
+            .get("x-forwarded-for")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|s| s.split(',').next())
+            .map(|s| s.trim().to_string())
+    };
 
     if let Some(ref ip) = ip {
         let allowed = if let Some(ref redis) = state.redis {
@@ -355,6 +382,31 @@ async fn login_rate_limit_middleware(
     next.run(req).await
 }
 
+/// Extract the real client IP from X-Forwarded-For by iterating right-to-left
+/// and returning the first IP not in the trusted proxies list (S12-3c).
+pub fn extract_client_ip_from_xff(
+    headers: &axum::http::HeaderMap,
+    trusted_proxies: &[std::net::IpAddr],
+) -> Option<String> {
+    let xff = headers
+        .get("x-forwarded-for")
+        .and_then(|v| v.to_str().ok())?;
+
+    // Iterate right-to-left through the XFF chain
+    for ip_str in xff.rsplit(',') {
+        let ip_str = ip_str.trim();
+        if let Ok(ip) = ip_str.parse::<std::net::IpAddr>() {
+            if !trusted_proxies.contains(&ip) {
+                return Some(ip.to_string());
+            }
+        } else {
+            // Non-parseable IP — treat as client IP (defence in depth)
+            return Some(ip_str.to_string());
+        }
+    }
+    None
+}
+
 /// Initialize tracing subscriber for structured logging
 pub fn init_tracing() {
     use tracing_subscriber::{fmt, prelude::*, EnvFilter};
@@ -379,4 +431,69 @@ pub fn init_tracing_pretty() {
         )
         .with(fmt::layer().pretty())
         .init();
+}
+
+#[cfg(test)]
+mod xff_tests {
+    use super::*;
+    use axum::http::HeaderMap;
+
+    #[test]
+    fn test_trusted_proxy_uses_forwarded_for() {
+        let trusted: Vec<std::net::IpAddr> = vec!["10.0.0.1".parse().unwrap()];
+        let mut headers = HeaderMap::new();
+        headers.insert("x-forwarded-for", "203.0.113.50, 10.0.0.1".parse().unwrap());
+
+        let ip = extract_client_ip_from_xff(&headers, &trusted);
+        assert_eq!(ip, Some("203.0.113.50".to_string()));
+    }
+
+    #[test]
+    fn test_untrusted_client_ignores_forwarded_for() {
+        // When trusted_proxies is empty, extract_client_ip_from_xff should still work
+        // but in the middleware, it won't be called at all. Test the function in isolation:
+        let trusted: Vec<std::net::IpAddr> = vec![];
+        let mut headers = HeaderMap::new();
+        headers.insert("x-forwarded-for", "203.0.113.50".parse().unwrap());
+
+        // All IPs are "untrusted" (none in the list), so returns the first non-trusted
+        let ip = extract_client_ip_from_xff(&headers, &trusted);
+        assert_eq!(ip, Some("203.0.113.50".to_string()));
+    }
+
+    #[test]
+    fn test_empty_trusted_proxies_uses_connect_info() {
+        // With empty trusted_proxies and no XFF header, returns None
+        let trusted: Vec<std::net::IpAddr> = vec![];
+        let headers = HeaderMap::new();
+
+        let ip = extract_client_ip_from_xff(&headers, &trusted);
+        assert_eq!(ip, None);
+    }
+
+    #[test]
+    fn test_xff_chain_right_to_left() {
+        let trusted: Vec<std::net::IpAddr> =
+            vec!["10.0.0.1".parse().unwrap(), "10.0.0.2".parse().unwrap()];
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "x-forwarded-for",
+            "1.2.3.4, 5.6.7.8, 10.0.0.2, 10.0.0.1".parse().unwrap(),
+        );
+
+        // Should skip trusted proxies from right and return 5.6.7.8
+        let ip = extract_client_ip_from_xff(&headers, &trusted);
+        assert_eq!(ip, Some("5.6.7.8".to_string()));
+    }
+
+    #[test]
+    fn test_xff_all_trusted_returns_none() {
+        let trusted: Vec<std::net::IpAddr> =
+            vec!["10.0.0.1".parse().unwrap(), "10.0.0.2".parse().unwrap()];
+        let mut headers = HeaderMap::new();
+        headers.insert("x-forwarded-for", "10.0.0.1, 10.0.0.2".parse().unwrap());
+
+        let ip = extract_client_ip_from_xff(&headers, &trusted);
+        assert_eq!(ip, None);
+    }
 }

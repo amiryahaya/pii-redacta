@@ -27,9 +27,11 @@ pub mod rate_limit;
 pub use extractors::{
     extract_api_auth, extract_api_key, extract_simple_auth, try_extract_auth, SimpleAuth,
 };
+pub mod admin;
+
 pub use middleware::{
-    api_auth_middleware, ip_rate_limit_middleware, jwt_auth_middleware, simple_auth_middleware,
-    RequestAuthExt,
+    api_auth_middleware, ip_rate_limit_middleware, jwt_auth_middleware,
+    jwt_auth_middleware_with_state, simple_auth_middleware, RequestAuthExt,
 };
 
 use pii_redacta_core::db::api_key_manager::ApiKeyManager;
