@@ -135,8 +135,11 @@ export function PlaygroundPage() {
         {/* Input Panel */}
         <div className="bg-white shadow rounded-lg">
           <div className="border-b border-gray-200">
-            <div className="flex">
+            <div className="flex" role="tablist" aria-label="Input mode">
               <button
+                role="tab"
+                aria-selected={mode === 'text'}
+                aria-controls="panel-text"
                 onClick={() => setMode('text')}
                 className={`flex-1 px-4 py-3 text-sm font-medium text-center border-b-2 transition-colors ${
                   mode === 'text'
@@ -144,10 +147,13 @@ export function PlaygroundPage() {
                     : 'border-transparent text-gray-500 hover:text-gray-700'
                 }`}
               >
-                <FileText className="w-4 h-4 inline mr-2" />
+                <FileText className="w-4 h-4 inline mr-2" aria-hidden="true" />
                 Text
               </button>
               <button
+                role="tab"
+                aria-selected={mode === 'file'}
+                aria-controls="panel-file"
                 onClick={() => setMode('file')}
                 className={`flex-1 px-4 py-3 text-sm font-medium text-center border-b-2 transition-colors ${
                   mode === 'file'
@@ -155,13 +161,13 @@ export function PlaygroundPage() {
                     : 'border-transparent text-gray-500 hover:text-gray-700'
                 }`}
               >
-                <Upload className="w-4 h-4 inline mr-2" />
+                <Upload className="w-4 h-4 inline mr-2" aria-hidden="true" />
                 File
               </button>
             </div>
           </div>
 
-          <div className="p-4">
+          <div className="p-4" id={`panel-${mode}`} role="tabpanel" aria-label={`${mode} input`}>
             {mode === 'text' ? (
               <textarea
                 value={text}
@@ -368,9 +374,15 @@ export function PlaygroundPage() {
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       {entry.success ? (
-                        <CheckCircle2 className="w-4 h-4 text-green-500" />
+                        <>
+                          <CheckCircle2 className="w-4 h-4 text-green-500" aria-hidden="true" />
+                          <span className="sr-only">Success</span>
+                        </>
                       ) : (
-                        <XCircle className="w-4 h-4 text-red-500" />
+                        <>
+                          <XCircle className="w-4 h-4 text-red-500" aria-hidden="true" />
+                          <span className="sr-only">Failed</span>
+                        </>
                       )}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">

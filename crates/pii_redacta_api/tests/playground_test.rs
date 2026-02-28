@@ -235,7 +235,7 @@ async fn test_playground_history_returns_entries() {
 
     let token = get_auth_token(user_id, &email).await;
 
-    // Submit a playground request first
+    // Submit a playground request first (usage is recorded synchronously)
     let submit_request = Request::builder()
         .uri("/api/v1/playground/text")
         .method("POST")
@@ -249,10 +249,7 @@ async fn test_playground_history_returns_entries() {
     let submit_response = app.clone().oneshot(submit_request).await.unwrap();
     assert_eq!(submit_response.status(), StatusCode::OK);
 
-    // Wait for fire-and-forget usage recording
-    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-
-    // Now fetch history
+    // Fetch history — no sleep needed, usage was recorded synchronously (M6 fix)
     let history_request = Request::builder()
         .uri("/api/v1/playground/history")
         .method("GET")
@@ -310,10 +307,7 @@ async fn test_playground_records_usage() {
     let response = app.oneshot(request).await.unwrap();
     assert_eq!(response.status(), StatusCode::OK);
 
-    // Wait for fire-and-forget usage recording
-    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-
-    // Verify usage_logs has a playground entry
+    // No sleep needed — usage recording is synchronous (M6 fix)
     let count: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM usage_logs WHERE user_id = $1 AND request_type = 'playground'",
     )
@@ -381,7 +375,7 @@ async fn test_playground_daily_limit_enforced() {
 
     let token = get_auth_token(user_id, &email).await;
 
-    // Use up the daily limit (2 requests)
+    // Use up the daily limit (2 requests) — usage is recorded synchronously (C1/M6 fix)
     for i in 0..2 {
         let request = Request::builder()
             .uri("/api/v1/playground/text")
@@ -400,9 +394,6 @@ async fn test_playground_daily_limit_enforced() {
             "Request {} should succeed",
             i + 1
         );
-
-        // Wait for usage recording
-        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
     }
 
     // Third request should be rate limited

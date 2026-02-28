@@ -32,7 +32,7 @@ ipnetwork = "0.20"
 tokio = { version = "1.35", features = ["full"] }
 
 # Web framework
-axum = { version = "0.7", features = ["json"] }
+axum = { version = "0.7", features = ["json", "multipart"] }
 tower = { version = "0.4", features = ["util"] }
 
 # Database

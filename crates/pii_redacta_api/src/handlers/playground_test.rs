@@ -35,6 +35,24 @@ fn test_playground_error_status_codes() {
     }
 }
 
+/// H4: ExtractionFailed should NOT leak internal details to the client
+#[tokio::test]
+async fn test_extraction_failed_does_not_leak_details() {
+    let error = PlaygroundError::ExtractionFailed("internal: /tmp/file parse error".to_string());
+    let response = error.into_response();
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let message = json["error"]["message"].as_str().unwrap();
+    // Should return a generic message, not the internal detail
+    assert_eq!(message, "Failed to extract text from file");
+    assert!(!message.contains("/tmp/"));
+    assert!(!message.contains("internal"));
+}
+
 #[test]
 fn test_playground_response_serialization() {
     let response = PlaygroundResponse {
@@ -136,4 +154,14 @@ fn test_playground_history_with_file() {
     assert_eq!(json["fileName"], "test.pdf");
     assert_eq!(json["fileType"], "application/pdf");
     assert_eq!(json["requestType"], "playground_file");
+}
+
+/// H1: text/csv should be accepted as a supported MIME type
+#[test]
+fn test_csv_mime_type_supported() {
+    assert!(is_supported_mime("text/csv"));
+    assert!(is_supported_mime("text/plain"));
+    assert!(is_supported_mime("application/pdf"));
+    assert!(!is_supported_mime("image/png"));
+    assert!(!is_supported_mime("application/json"));
 }

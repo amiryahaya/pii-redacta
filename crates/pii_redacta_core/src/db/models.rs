@@ -227,9 +227,11 @@ fn default_environment() -> String {
 #[serde(rename_all = "snake_case")]
 pub enum RequestType {
     Playground,
+    PlaygroundFile,
     ApiDetect,
     ApiRedact,
     ApiDetectStream,
+    FileUpload,
 }
 
 /// Usage log entry for analytics and limits

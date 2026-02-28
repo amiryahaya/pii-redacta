@@ -5,9 +5,8 @@
 use crate::extractors::AuthUser;
 use crate::AppState;
 use axum::{
-    body::Body,
-    extract::{ConnectInfo, Extension, State},
-    http::{Request, StatusCode},
+    extract::{ConnectInfo, Extension, Multipart, State},
+    http::StatusCode,
     response::IntoResponse,
     Json,
 };
@@ -21,11 +20,15 @@ use uuid::Uuid;
 /// Maximum text length (1 MB)
 const MAX_TEXT_LENGTH: usize = 1_000_000;
 
+/// Maximum file size for multipart reads (10 MB, matches body size middleware)
+const MAX_FILE_BYTES: usize = 10 * 1024 * 1024;
+
 // ============================================================================
 // Request / Response Types
 // ============================================================================
 
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PlaygroundTextRequest {
     pub text: String,
     pub redact: Option<bool>,
@@ -97,8 +100,13 @@ impl IntoResponse for PlaygroundError {
             PlaygroundError::TextTooLong => (StatusCode::PAYLOAD_TOO_LARGE, self.to_string()),
             PlaygroundError::EmptyInput => (StatusCode::BAD_REQUEST, self.to_string()),
             PlaygroundError::UnsupportedFileType(_) => (StatusCode::BAD_REQUEST, self.to_string()),
-            PlaygroundError::ExtractionFailed(_) => {
-                (StatusCode::UNPROCESSABLE_ENTITY, self.to_string())
+            PlaygroundError::ExtractionFailed(detail) => {
+                // Log the internal detail but return a generic message to the client (H4)
+                tracing::warn!("Playground extraction failed: {detail}");
+                (
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    "Failed to extract text from file".to_string(),
+                )
             }
             PlaygroundError::Database(_) => (
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -186,6 +194,16 @@ async fn check_playground_quota(
     })
 }
 
+/// Record usage synchronously so that quota counts are always up-to-date (C1 fix).
+async fn record_playground_usage(
+    pool: &sqlx::PgPool,
+    record: &pii_redacta_core::db::usage::UsageRecord<'_>,
+) {
+    if let Err(e) = pii_redacta_core::db::usage::record_usage(pool, record).await {
+        tracing::warn!("Failed to record playground usage: {e}");
+    }
+}
+
 // ============================================================================
 // Handlers
 // ============================================================================
@@ -214,9 +232,10 @@ pub async fn playground_text(
     let entities = detector.detect_all(&request.text);
     let processing_time_ms = start.elapsed().as_secs_f64() * 1000.0;
 
-    // Optional redaction
+    // Optional redaction — use user_id as tenant for isolation (M5)
     let redacted_text = if request.redact.unwrap_or(false) && !entities.is_empty() {
-        let tokenizer = Tokenizer::new("playground");
+        let tenant_id = auth_user.user_id.to_string();
+        let tokenizer = Tokenizer::new(&tenant_id);
         let (tokenized, _) = tokenizer.tokenize(&request.text, &entities);
         Some(tokenized)
     } else {
@@ -231,30 +250,23 @@ pub async fn playground_text(
         .metrics
         .record_detection(detections_count as u64, processing_time_ms);
 
-    // Fire-and-forget usage recording
-    let pool = state.db.pool().clone();
-    let user_id = auth_user.user_id;
-    let proc_ms = processing_time_ms as i32;
+    // Record usage synchronously for accurate quota tracking (C1 fix)
     let ip = connect_info.map(|ci| ci.0.ip().to_string());
-    tokio::spawn(async move {
-        let record = pii_redacta_core::db::usage::UsageRecord {
-            user_id,
-            api_key_id: None,
-            request_type: "playground",
-            file_name: None,
-            file_size_bytes: None,
-            file_type: None,
-            processing_time_ms: Some(proc_ms),
-            page_count: None,
-            detections_count: Some(detections_count),
-            success: true,
-            error_message: None,
-            ip_address: ip.as_deref(),
-        };
-        if let Err(e) = pii_redacta_core::db::usage::record_usage(&pool, &record).await {
-            tracing::warn!("Failed to record playground usage: {e}");
-        }
-    });
+    let record = pii_redacta_core::db::usage::UsageRecord {
+        user_id: auth_user.user_id,
+        api_key_id: None,
+        request_type: "playground",
+        file_name: None,
+        file_size_bytes: None,
+        file_type: None,
+        processing_time_ms: Some(processing_time_ms as i32),
+        page_count: None,
+        detections_count: Some(detections_count),
+        success: true,
+        error_message: None,
+        ip_address: ip.as_deref(),
+    };
+    record_playground_usage(state.db.pool(), &record).await;
 
     Ok(Json(PlaygroundResponse {
         entities,
@@ -269,17 +281,61 @@ pub async fn playground_text(
 }
 
 /// POST /api/v1/playground/file — Detect PII in uploaded file
+///
+/// Accepts `multipart/form-data` with a `file` field and optional `redact` field.
+/// Uses Axum's `Multipart` extractor for correct binary file handling (C2 fix).
 pub async fn playground_file(
     State(state): State<AppState>,
     Extension(auth_user): Extension<AuthUser>,
     connect_info: Option<ConnectInfo<SocketAddr>>,
-    request: Request<Body>,
+    mut multipart: Multipart,
 ) -> Result<Json<PlaygroundResponse>, PlaygroundError> {
     // Quota check
     let quota = check_playground_quota(&state, auth_user.user_id).await?;
 
-    // Parse multipart
-    let (file_bytes, file_name, mime_type) = parse_playground_upload(request).await?;
+    // Parse multipart fields
+    let mut file_bytes: Option<Vec<u8>> = None;
+    let mut file_name: Option<String> = None;
+    let mut mime_type = "application/octet-stream".to_string();
+    let mut redact = false;
+
+    while let Ok(Some(field)) = multipart.next_field().await {
+        match field.name() {
+            Some("file") => {
+                file_name = field.file_name().map(|s| s.to_string());
+                if let Some(ct) = field.content_type() {
+                    mime_type = ct.to_string();
+                }
+                let bytes = field
+                    .bytes()
+                    .await
+                    .map_err(|_| PlaygroundError::FileTooLarge)?;
+                if bytes.len() > MAX_FILE_BYTES {
+                    return Err(PlaygroundError::FileTooLarge);
+                }
+                file_bytes = Some(bytes.to_vec());
+            }
+            Some("redact") => {
+                // M2 fix: read the redact field from the multipart form
+                if let Ok(val) = field.text().await {
+                    redact = val == "true" || val == "1";
+                }
+            }
+            _ => {
+                // Skip unknown fields
+            }
+        }
+    }
+
+    let file_bytes = file_bytes.ok_or(PlaygroundError::EmptyInput)?;
+    if file_bytes.is_empty() {
+        return Err(PlaygroundError::EmptyInput);
+    }
+
+    // Validate MIME type
+    if !is_supported_mime(&mime_type) {
+        return Err(PlaygroundError::UnsupportedFileType(mime_type));
+    }
 
     // Check file size against tier limit
     if let Some(max_size) = quota.max_file_size {
@@ -288,8 +344,15 @@ pub async fn playground_file(
         }
     }
 
+    // Map text/csv to text/plain for the extractor (H1 fix)
+    let extraction_mime = if mime_type == "text/csv" {
+        "text/plain"
+    } else {
+        &mime_type
+    };
+
     // Extract text
-    let extracted = Extractor::extract(&file_bytes, Some(&mime_type))
+    let extracted = Extractor::extract(&file_bytes, Some(extraction_mime))
         .map_err(|e| PlaygroundError::ExtractionFailed(e.to_string()))?;
 
     if extracted.text.is_empty() {
@@ -304,9 +367,10 @@ pub async fn playground_file(
     let entities = detector.detect_all(&extracted.text);
     let processing_time_ms = start.elapsed().as_secs_f64() * 1000.0;
 
-    // Optional redaction (check query param via file name convention, default false)
-    let redacted_text = if !entities.is_empty() {
-        let tokenizer = Tokenizer::new("playground");
+    // Redaction controlled by the `redact` form field (M2 fix)
+    let redacted_text = if redact && !entities.is_empty() {
+        let tenant_id = auth_user.user_id.to_string();
+        let tokenizer = Tokenizer::new(&tenant_id);
         let (tokenized, _) = tokenizer.tokenize(&extracted.text, &entities);
         Some(tokenized)
     } else {
@@ -322,32 +386,23 @@ pub async fn playground_file(
         .metrics
         .record_detection(detections_count as u64, processing_time_ms);
 
-    // Fire-and-forget usage recording
-    let pool = state.db.pool().clone();
-    let user_id = auth_user.user_id;
-    let proc_ms = processing_time_ms as i32;
+    // Record usage synchronously for accurate quota tracking (C1 fix)
     let ip = connect_info.map(|ci| ci.0.ip().to_string());
-    let fname = file_name.clone();
-    let ftype = mime_type.clone();
-    tokio::spawn(async move {
-        let record = pii_redacta_core::db::usage::UsageRecord {
-            user_id,
-            api_key_id: None,
-            request_type: "playground_file",
-            file_name: fname.as_deref(),
-            file_size_bytes: Some(file_size),
-            file_type: Some(&ftype),
-            processing_time_ms: Some(proc_ms),
-            page_count: None,
-            detections_count: Some(detections_count),
-            success: true,
-            error_message: None,
-            ip_address: ip.as_deref(),
-        };
-        if let Err(e) = pii_redacta_core::db::usage::record_usage(&pool, &record).await {
-            tracing::warn!("Failed to record playground file usage: {e}");
-        }
-    });
+    let record = pii_redacta_core::db::usage::UsageRecord {
+        user_id: auth_user.user_id,
+        api_key_id: None,
+        request_type: "playground_file",
+        file_name: file_name.as_deref(),
+        file_size_bytes: Some(file_size),
+        file_type: Some(&mime_type),
+        processing_time_ms: Some(processing_time_ms as i32),
+        page_count: None,
+        detections_count: Some(detections_count),
+        success: true,
+        error_message: None,
+        ip_address: ip.as_deref(),
+    };
+    record_playground_usage(state.db.pool(), &record).await;
 
     Ok(Json(PlaygroundResponse {
         entities,
@@ -413,10 +468,14 @@ pub async fn playground_history(
 }
 
 // ============================================================================
-// Multipart Parser (Playground)
+// MIME Type Validation
 // ============================================================================
 
-/// Supported MIME types for playground file upload
+/// Supported MIME types for playground file upload.
+///
+/// Both the full and abbreviated OpenXML MIME types are accepted because:
+/// - Browsers typically send the full form (`application/vnd.openxmlformats-officedocument...`)
+/// - The magic-byte detector (`TextExtractor::detect_mime`) returns the abbreviated form
 const SUPPORTED_MIME_TYPES: &[&str] = &[
     "text/plain",
     "text/csv",
@@ -425,90 +484,8 @@ const SUPPORTED_MIME_TYPES: &[&str] = &[
     "application/vnd.openxmlformats",
 ];
 
-/// Parse multipart form data for playground file upload.
-/// Returns (file_bytes, file_name, mime_type).
-async fn parse_playground_upload(
-    request: Request<Body>,
-) -> Result<(Vec<u8>, Option<String>, String), PlaygroundError> {
-    let content_type = request
-        .headers()
-        .get("content-type")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("")
-        .to_string();
-
-    if !content_type.starts_with("multipart/form-data") {
-        return Err(PlaygroundError::UnsupportedFileType(
-            "Expected multipart/form-data".to_string(),
-        ));
-    }
-
-    let boundary = content_type
-        .split("boundary=")
-        .nth(1)
-        .ok_or_else(|| PlaygroundError::UnsupportedFileType("Missing boundary".to_string()))?
-        .to_string();
-
-    let body_bytes = axum::body::to_bytes(
-        request.into_body(),
-        crate::middleware::security::DEFAULT_MAX_BODY_SIZE,
-    )
-    .await
-    .map_err(|_| PlaygroundError::FileTooLarge)?;
-
-    let body_str = String::from_utf8_lossy(&body_bytes);
-    let boundary_str = format!("--{}", boundary);
-
-    let mut file_content = Vec::new();
-    let mut mime_type = "application/octet-stream".to_string();
-    let mut file_name: Option<String> = None;
-    let mut found_file = false;
-
-    for part in body_str.split(&boundary_str) {
-        if part.contains("Content-Disposition: form-data") && part.contains("name=\"file\"") {
-            found_file = true;
-
-            // Extract filename
-            if let Some(fn_start) = part.find("filename=\"") {
-                let after = &part[fn_start + 10..];
-                if let Some(fn_end) = after.find('"') {
-                    let name = after[..fn_end].to_string();
-                    if !name.is_empty() {
-                        file_name = Some(name);
-                    }
-                }
-            }
-
-            // Extract content-type
-            if let Some(ct_line) = part.lines().find(|l| l.starts_with("Content-Type:")) {
-                mime_type = ct_line
-                    .split(':')
-                    .nth(1)
-                    .unwrap_or("application/octet-stream")
-                    .trim()
-                    .to_string();
-            }
-
-            // Extract body
-            if let Some(content_start) = part.find("\r\n\r\n") {
-                let content = &part[content_start + 4..];
-                let content = content.trim_end_matches("\r\n");
-                file_content = content.as_bytes().to_vec();
-            }
-            break;
-        }
-    }
-
-    if !found_file || file_content.is_empty() {
-        return Err(PlaygroundError::EmptyInput);
-    }
-
-    // Validate MIME type
-    if !SUPPORTED_MIME_TYPES.contains(&mime_type.as_str()) {
-        return Err(PlaygroundError::UnsupportedFileType(mime_type));
-    }
-
-    Ok((file_content, file_name, mime_type))
+fn is_supported_mime(mime: &str) -> bool {
+    SUPPORTED_MIME_TYPES.contains(&mime)
 }
 
 #[cfg(test)]

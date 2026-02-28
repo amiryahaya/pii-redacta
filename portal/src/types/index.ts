@@ -120,7 +120,7 @@ export interface PlaygroundEntity {
   value: string
   start: number
   end: number
-  confidence: number
+  confidence?: number
 }
 
 export interface PlaygroundResponse {
