@@ -1,8 +1,8 @@
 # PII Redacta Development Roadmap
 
-**Version:** 3.0 (Sprint-Based TDD)  
-**Last Updated:** 2026-02-27  
-**Status:** Ready for Sprint 1
+**Version:** 4.0 (Sprint-Based TDD)
+**Last Updated:** 2026-02-28
+**Status:** Sprint 10 Complete — Sprint 11 Ready
 
 ---
 
@@ -18,333 +18,153 @@ Sprint End: Commit, Tag, Push
 
 ---
 
-## Phase 1: MVP - Standard Mode (Sprints 1-8)
+## Phase 1: MVP - Standard Mode (Sprints 1-8) ✅
 
-### Sprint 1: Project Foundation & Core Types ⏳
-**Duration:** 2 weeks  
-**Dates:** Week 1-2  
-**Status:** Ready to start
-
-**TDD Deliverables:**
-- [ ] Workspace structure tests
-- [ ] Domain type tests (Entity, EntityType, DetectionResult)
-- [ ] Error type tests
-- [ ] CI/CD workflow tests
-
-**Code Review Checklist:**
-- [ ] All tests pass
-- [ ] Coverage > 80%
-- [ ] Types properly serializable
-- [ ] CI configured
-
-**QA Checklist:**
-- [ ] Clean build in fresh environment
-- [ ] No clippy warnings
-- [ ] Documentation builds
-
+### Sprint 1: Project Foundation & Core Types ✅
 **Sprint Commit:** `feat(core): sprint 1 - project foundation and core types`
 
----
-
-### Sprint 2: Pattern-Based Detection Engine 📋
-**Duration:** 2 weeks  
-**Dates:** Week 3-4  
-**Status:** Planned
-
-**TDD Deliverables:**
-- [ ] Email pattern detection tests
-- [ ] Malaysian NRIC pattern tests
-- [ ] Phone number pattern tests
-- [ ] Credit card pattern tests
-- [ ] Performance tests (< 1ms)
-- [ ] Benchmark tests
-
-**Code Review Checklist:**
-- [ ] All patterns tested
-- [ ] Performance targets met
-- [ ] Benchmarks exist
-- [ ] No regex DoS vulnerabilities
-
-**QA Checklist:**
-- [ ] Benchmarks pass
-- [ ] Memory stable under load
-- [ ] Unicode handling correct
-
+### Sprint 2: Pattern-Based Detection Engine ✅
 **Sprint Commit:** `feat(detection): sprint 2 - pattern-based detection engine`
 
----
-
-### Sprint 3: Tokenization Engine 📋
-**Duration:** 2 weeks  
-**Dates:** Week 5-6  
-**Status:** Planned
-
-**TDD Deliverables:**
-- [ ] Token generator determinism tests
-- [ ] Tenant isolation tests
-- [ ] Tokenizer tests
-- [ ] Overlapping entity tests
-- [ ] Token store tests (with TTL)
-- [ ] Detokenization tests
-
-**Code Review Checklist:**
-- [ ] Tokens are deterministic
-- [ ] Tenant isolation works
-- [ ] No PII in tokens
-- [ ] Overlaps handled
-
-**QA Checklist:**
-- [ ] Detokenize exact restore
-- [ ] TTL expiration works
-- [ ] Memory bounded
-
+### Sprint 3: Tokenization Engine ✅
 **Sprint Commit:** `feat(tokenization): sprint 3 - tokenization engine`
 
----
-
-### Sprint 4: REST API Foundation 📋
-**Duration:** 2 weeks  
-**Dates:** Week 7-8  
-**Status:** Planned
-
-**TDD Deliverables:**
-- [ ] Health endpoint tests
-- [ ] Detection endpoint tests
-- [ ] Error handling tests
-- [ ] Request validation tests
-- [ ] Content-type tests
-
-**Code Review Checklist:**
-- [ ] All endpoints tested
-- [ ] Errors comprehensive
-- [ ] Status codes correct
-- [ ] API types validated
-
-**QA Checklist:**
-- [ ] Response time < 50ms
-- [ ] Concurrent requests work
-- [ ] JSON correct
-
+### Sprint 4: REST API Foundation ✅
 **Sprint Commit:** `feat(api): sprint 4 - REST API foundation`
 
----
-
-### Sprint 5: File Processing 📋
-**Duration:** 2 weeks  
-**Dates:** Week 9-10  
-**Status:** Planned
-
-**TDD Deliverables:**
-- [ ] Text extraction tests
-- [ ] PDF extraction tests
-- [ ] DOCX extraction tests
-- [ ] MIME type detection tests
-- [ ] Unsupported type tests
-
-**Code Review Checklist:**
-- [ ] All formats tested
-- [ ] Error handling robust
-- [ ] Binary safety verified
-
-**QA Checklist:**
-- [ ] PDF extraction accurate
-- [ ] DOCX extraction preserves text
-- [ ] Large files handled
-
+### Sprint 5: File Processing ✅
 **Sprint Commit:** `feat(extraction): sprint 5 - file processing`
 
----
-
-### Sprint 6: File Upload API & Integration 📋
-**Duration:** 2 weeks  
-**Dates:** Week 11-12  
-**Status:** Planned
-
-**TDD Deliverables:**
-- [ ] Multipart upload tests
-- [ ] Job queue tests
-- [ ] Job status tests
-- [ ] File size limit tests
-- [ ] Async processing tests
-
-**Code Review Checklist:**
-- [ ] Upload secure
-- [ ] Queue reliable
-- [ ] Status tracking works
-
-**QA Checklist:**
-- [ ] Large uploads work
-- [ ] Queue handles load
-- [ ] Jobs complete
-
+### Sprint 6: File Upload API & Integration ✅
 **Sprint Commit:** `feat(api): sprint 6 - file upload and async processing`
 
----
-
-### Sprint 7: Observability & Documentation 📋
-**Duration:** 2 weeks  
-**Dates:** Week 13-14  
-**Status:** Planned
-
-**TDD Deliverables:**
-- [ ] PII-safe logging tests
-- [ ] Metrics collection tests
-- [ ] OpenAPI spec tests
-- [ ] Health metrics tests
-
-**Code Review Checklist:**
-- [ ] No PII in logs
-- [ ] Metrics accurate
-- [ ] OpenAPI valid
-
-**QA Checklist:**
-- [ ] Logs redact PII
-- [ ] Prometheus metrics work
-- [ ] OpenAPI generates correctly
-
+### Sprint 7: Observability & Documentation ✅
 **Sprint Commit:** `feat(observability): sprint 7 - logging, metrics, docs`
 
----
-
-### Sprint 8: Security Hardening & MVP Release 📋
-**Duration:** 2 weeks  
-**Dates:** Week 15-16  
-**Status:** Planned
-
-**TDD Deliverables:**
-- [ ] Rate limiting tests
-- [ ] Security header tests
-- [ ] Input validation tests
-- [ ] Docker build tests
-- [ ] Security audit tests
-
-**Code Review Checklist:**
-- [ ] Rate limits enforced
-- [ ] Security headers present
-- [ ] Docker image builds
-- [ ] No security issues
-
-**QA Checklist:**
-- [ ] Rate limiting works
-- [ ] Security scan passes
-- [ ] Docker runs correctly
-- [ ] All tests pass
-
+### Sprint 8: Security Hardening & MVP Release ✅
 **Sprint Commit:** `feat(release): sprint 8 - MVP security hardening and release`
 
 **MVP Tag:** `v0.1.0-mvp`
 
 ---
 
-## Phase 2: Enhanced Detection (Sprints 9-12)
+## Phase 2: Portal & User Management (Sprints 9-10) ✅
 
-### Sprint 9: GLiNER Integration 📋
-**Duration:** 2 weeks  
-**Dates:** Week 17-18  
-**Status:** Planned
+### Sprint 9: Database, Auth & Configurable Tier System ✅
+- PostgreSQL with SQLx migrations (users, tiers, subscriptions, api_keys, usage_logs)
+- JWT authentication (register, login, logout, me, profile, preferences)
+- Configurable tier system with TierManager + Redis caching
+- API key management (HMAC-SHA256, generate, revoke, list)
+- Usage & dashboard handlers
+- Subscription endpoints
+- Portal UI (React 18, Vite, Tailwind, Zustand, TanStack Query)
+- Security hardening (4 code review rounds)
 
-**TDD Deliverables:**
-- [ ] GLiNER binding tests
-- [ ] Malaysian PII tests
-- [ ] Fallback to patterns tests
-- [ ] Performance tests
+**Tests:** 264 passing
 
-**Sprint Commit:** `feat(detection): sprint 9 - GLiNER integration`
+### Sprint 10: Portal/API Integration Fixes ✅
+- Fixed serde camelCase mismatches (RegisterRequest, ChangePasswordRequest, all response structs)
+- Fixed preferences URL path, dashboard field names, usage summary response shape
+- Added authenticated `/api/v1/detect` endpoint with fire-and-forget usage logging
+- Added in-memory rate limiting (10 req/min) on login/register with eviction
+- Wired `usage_logs` table via `record_usage()` in core DB layer
+- Fixed portal: logout calls backend, trend logic, email guard, redirect
+- Updated `.env.example` to `PII_REDACTA_` prefix
 
----
-
-### Sprint 10: Presidio Integration 📋
-**Duration:** 2 weeks  
-**Dates:** Week 19-20  
-**Status:** Planned
-
-**TDD Deliverables:**
-- [ ] Presidio binding tests
-- [ ] Context analysis tests
-- [ ] Score aggregation tests
-
-**Sprint Commit:** `feat(detection): sprint 10 - Presidio integration`
+**Tests:** 270 passing
 
 ---
 
-### Sprint 11: Detection Pipeline V2 📋
-**Duration:** 2 weeks  
-**Dates:** Week 21-22  
-**Status:** Planned
+## Phase 3: Infrastructure & Security (Sprints 11-12)
 
-**TDD Deliverables:**
-- [ ] 3-tier pipeline tests
-- [ ] Tier selection tests
-- [ ] Confidence scoring tests
+### Sprint 11: File Processing Pipeline & Redis Integration ⏳
+**Duration:** 2 weeks
+**Status:** Ready to start
 
-**Sprint Commit:** `feat(detection): sprint 11 - enhanced detection pipeline`
+**Deliverables:**
+- [ ] Background job worker (processes uploads: Pending → Processing → Completed/Failed)
+- [ ] File extraction integration (PDF, DOCX, XLSX, CSV → detect → results)
+- [ ] Redis client integration (replace in-memory rate limiter with distributed)
+- [ ] Real Prometheus metrics (replace hardcoded zeros)
+- [ ] Redis health check in `health_deep()`
+- [ ] API key list pagination (limit/offset)
 
----
-
-### Sprint 12: Performance Optimization 📋
-**Duration:** 2 weeks  
-**Dates:** Week 23-24  
-**Status:** Planned
-
-**TDD Deliverables:**
-- [ ] Benchmark regression tests
-- [ ] Memory optimization tests
-- [ ] Concurrency tests
-
-**Sprint Commit:** `perf(core): sprint 12 - performance optimization`
+**Tests Target:** 30 new tests
+**Sprint Commit:** `feat(api): sprint 11 - file processing pipeline, Redis integration, metrics`
 
 ---
 
-## Phase 3: Enterprise Features (Sprints 13-16)
-
-### Sprint 13: Zero-Knowledge Architecture 📋
-**Duration:** 2 weeks  
+### Sprint 12: Security Hardening v2 🔒
+**Duration:** 2 weeks
 **Status:** Planned
 
-**TDD Deliverables:**
-- [ ] ML-KEM tests
-- [ ] Hybrid encryption tests
-- [ ] Secure processing tests
+**Deliverables:**
+- [ ] JWT token blacklist on password change (Redis-backed)
+- [ ] Admin flag server-side re-verification (query DB on privileged ops)
+- [ ] X-Forwarded-For trust chain validation (configurable trusted proxies)
+- [ ] Handler unit test coverage (usage, subscription, auth, api_keys)
+- [ ] Error tracking integration (Sentry) in portal ErrorBoundary
 
-**Sprint Commit:** `feat(security): sprint 13 - zero-knowledge architecture`
+**Tests Target:** 25 new tests
+**Sprint Commit:** `fix(security): sprint 12 - token blacklist, admin verification, proxy trust`
 
 ---
 
-### Sprint 14: gRPC API 📋
-**Duration:** 2 weeks  
+## Phase 4: Features & Enterprise (Sprints 13-16)
+
+### Sprint 13: Playground Feature 📋
+**Duration:** 2 weeks
 **Status:** Planned
 
-**TDD Deliverables:**
-- [ ] gRPC service tests
-- [ ] Streaming tests
-- [ ] Proto validation tests
+**Deliverables:**
+- [ ] Playground backend handlers (limits, submit, history)
+- [ ] Playground portal page (file upload, results display)
+- [ ] Daily quota enforcement from tier limits
+- [ ] Playground submission tracking in `usage_logs`
 
-**Sprint Commit:** `feat(api): sprint 14 - gRPC API`
+**Tests Target:** 25 new tests
+**Sprint Commit:** `feat(api): sprint 13 - authenticated playground`
 
 ---
 
-### Sprint 15: PostgreSQL Integration 📋
-**Duration:** 2 weeks  **Status:** Planned
+### Sprint 14: Batch Processing & Webhooks 📋
+**Duration:** 2 weeks
+**Status:** Planned
 
-**TDD Deliverables:**
-- [ ] Migration tests
-- [ ] Job storage tests
-- [ ] Audit log tests
+**Deliverables:**
+- [ ] Batch detection endpoint (multi-text, multi-file)
+- [ ] Webhook delivery system (configurable per-user)
+- [ ] Custom detection rules engine (user-defined regex patterns)
 
-**Sprint Commit:** `feat(storage): sprint 15 - PostgreSQL integration`
+**Tests Target:** 25 new tests
+**Sprint Commit:** `feat(api): sprint 14 - batch processing, webhooks, custom rules`
 
 ---
 
-### Sprint 16: Monitoring & Enterprise Release 📋
-**Duration:** 2 weeks  
+### Sprint 15: GLiNER Integration 📋
+**Duration:** 2 weeks
 **Status:** Planned
 
-**TDD Deliverables:**
-- [ ] Grafana dashboard tests
-- [ ] Alerting tests
-- [ ] Enterprise integration tests
+**Deliverables:**
+- [ ] GLiNER Python microservice integration
+- [ ] Malaysian PII entity detection (address, postcode, organization)
+- [ ] Hybrid detection pipeline (regex → GLiNER → confidence merge)
+- [ ] Fallback to pattern-only when GLiNER unavailable
 
-**Sprint Commit:** `feat(release): sprint 16 - enterprise release`
+**Sprint Commit:** `feat(detection): sprint 15 - GLiNER integration`
+
+---
+
+### Sprint 16: Enterprise & Release 📋
+**Duration:** 2 weeks
+**Status:** Planned
+
+**Deliverables:**
+- [ ] Admin dashboard (tier management UI)
+- [ ] Billing foundation (Stripe integration)
+- [ ] Team/organization accounts
+- [ ] Performance optimization & caching
+- [ ] Comprehensive documentation
 
 **Release Tag:** `v1.0.0`
 
@@ -354,35 +174,34 @@ Sprint End: Commit, Tag, Push
 
 ```
 Legend:
-⏳ Ready to start
-🔄 In progress
 ✅ Complete
+⏳ Ready to start
 📋 Planned
 ```
 
-### Current Sprint
-| Sprint | Name | Status | Branch | Tests | Coverage |
-|--------|------|--------|--------|-------|----------|
-| 1 | Foundation | ⏳ | `sprint/1-foundation` | 0/24 | 0% |
+### Completed
+| Sprint | Name | Tests | Key Metric |
+|--------|------|-------|------------|
+| 1 | Foundation | ✅ | Core types |
+| 2 | Detection Engine | ✅ | < 1ms detection |
+| 3 | Tokenization | ✅ | Deterministic HMAC |
+| 4 | REST API | ✅ | Axum endpoints |
+| 5 | File Processing | ✅ | PDF/DOCX/CSV |
+| 6 | Upload API | ✅ | Multipart + jobs |
+| 7 | Observability | ✅ | Metrics + logging |
+| 8 | Security Hardening | ✅ | Headers + limits |
+| 9 | Database & Auth | ✅ | 264 tests |
+| 10 | Integration Fixes | ✅ | 270 tests |
 
-### Upcoming Sprints
+### Current & Upcoming
 | Sprint | Name | Status | Target |
 |--------|------|--------|--------|
-| 2 | Detection Engine | 📋 | Week 3-4 |
-| 3 | Tokenization | 📋 | Week 5-6 |
-| 4 | REST API | 📋 | Week 7-8 |
-| 5 | File Processing | 📋 | Week 9-10 |
-| 6 | Upload API | 📋 | Week 11-12 |
-| 7 | Observability | 📋 | Week 13-14 |
-| 8 | MVP Release | 📋 | Week 15-16 |
-
----
-
-## Sprint Commit Log
-
-| Sprint | Commit Hash | Message | Tests | Coverage |
-|--------|-------------|---------|-------|----------|
-| - | - | Initial setup | - | - |
+| 11 | File Pipeline & Redis | ⏳ | Next |
+| 12 | Security Hardening v2 | 📋 | After 11 |
+| 13 | Playground | 📋 | After 12 |
+| 14 | Batch & Webhooks | 📋 | After 13 |
+| 15 | GLiNER Integration | 📋 | After 14 |
+| 16 | Enterprise & Release | 📋 | Final |
 
 ---
 
@@ -407,14 +226,6 @@ Legend:
 
 ---
 
-## Velocity Tracking
-
-| Sprint | Planned | Completed | Velocity |
-|--------|---------|-----------|----------|
-| 1 | 24 tests | - | - |
-
----
-
-**Document Version:** 3.0  
-**Last Updated:** 2026-02-27  
-**Next Review:** After Sprint 1
+**Document Version:** 4.0
+**Last Updated:** 2026-02-28
+**Next Review:** After Sprint 11
