@@ -1,11 +1,20 @@
 //! Playground handlers for interactive PII detection
 //!
 //! Sprint 13: Authenticated Playground — text and file analysis with tier-based daily quotas.
+//!
+//! ## Design notes
+//!
+//! - **Entity serialization**: The `Entity` struct from `pii_redacta_core` uses `snake_case`
+//!   field names (`entity_type`, not `entityType`). This is a pre-existing convention shared
+//!   with the detection API and cannot be changed without a breaking API migration.
+//!
+//! - **PII in response**: The `entities` array intentionally includes raw PII values so users
+//!   can see exactly what was detected. This is the core purpose of the playground feature.
 
 use crate::extractors::AuthUser;
 use crate::AppState;
 use axum::{
-    extract::{ConnectInfo, Extension, Multipart, State},
+    extract::{ConnectInfo, Extension, Multipart, Query, State},
     http::StatusCode,
     response::IntoResponse,
     Json,
@@ -22,6 +31,26 @@ const MAX_TEXT_LENGTH: usize = 1_000_000;
 
 /// Maximum file size for multipart reads (10 MB, matches body size middleware)
 const MAX_FILE_BYTES: usize = 10 * 1024 * 1024;
+
+/// Maximum allowed length for uploaded file names (matches DB VARCHAR(255))
+const MAX_FILE_NAME_LEN: usize = 255;
+
+/// Sanitize a file name from a multipart upload (M3 fix).
+///
+/// Strips path separators, control characters, and truncates to `MAX_FILE_NAME_LEN`
+/// to prevent VARCHAR(255) constraint violations and harden against stored-XSS vectors.
+fn sanitize_file_name(raw: &str) -> String {
+    let name: String = raw
+        .chars()
+        .filter(|c| !c.is_control() && *c != '/' && *c != '\\')
+        .take(MAX_FILE_NAME_LEN)
+        .collect();
+    if name.is_empty() {
+        "unnamed".to_string()
+    } else {
+        name
+    }
+}
 
 // ============================================================================
 // Request / Response Types
@@ -65,6 +94,15 @@ pub struct PlaygroundHistoryEntry {
     pub processing_time_ms: Option<i32>,
     pub success: bool,
     pub created_at: String,
+}
+
+/// Query parameters for the history endpoint (L4 — pagination)
+#[derive(Debug, Deserialize)]
+pub struct HistoryQuery {
+    /// Maximum number of entries to return (1–100, default 20)
+    pub limit: Option<i64>,
+    /// Number of entries to skip (default 0)
+    pub offset: Option<i64>,
 }
 
 // ============================================================================
@@ -133,6 +171,13 @@ struct PlaygroundQuota {
     used_today: i64,
 }
 
+/// Check the user's playground quota.
+///
+/// **Known limitation (M1):** There is a TOCTOU window between this check and the
+/// subsequent `record_playground_usage` call. Concurrent requests from the same user
+/// could both pass the quota check before either records usage. This is acceptable for
+/// a playground feature — strict enforcement would require `SELECT ... FOR UPDATE`
+/// advisory locking or an atomic INSERT-with-count pattern.
 async fn check_playground_quota(
     state: &AppState,
     user_id: Uuid,
@@ -259,7 +304,7 @@ pub async fn playground_text(
         file_name: None,
         file_size_bytes: None,
         file_type: None,
-        processing_time_ms: Some(processing_time_ms as i32),
+        processing_time_ms: Some(processing_time_ms.round() as i32),
         page_count: None,
         detections_count: Some(detections_count),
         success: true,
@@ -302,7 +347,7 @@ pub async fn playground_file(
     while let Ok(Some(field)) = multipart.next_field().await {
         match field.name() {
             Some("file") => {
-                file_name = field.file_name().map(|s| s.to_string());
+                file_name = field.file_name().map(sanitize_file_name);
                 if let Some(ct) = field.content_type() {
                     mime_type = ct.to_string();
                 }
@@ -344,11 +389,15 @@ pub async fn playground_file(
         }
     }
 
-    // Map text/csv to text/plain for the extractor (H1 fix)
-    let extraction_mime = if mime_type == "text/csv" {
-        "text/plain"
-    } else {
-        &mime_type
+    // Normalize MIME type for the extractor:
+    // - text/csv → text/plain (H1 fix)
+    // - abbreviated OpenXML → full DOCX MIME (M4 fix: prevents XLSX misrouting)
+    let extraction_mime = match mime_type.as_str() {
+        "text/csv" => "text/plain",
+        "application/vnd.openxmlformats" => {
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        }
+        other => other,
     };
 
     // Extract text
@@ -379,7 +428,8 @@ pub async fn playground_file(
 
     let text_length = extracted.text.len();
     let detections_count = entities.len() as i32;
-    let file_size = file_bytes.len() as i32;
+    // M2 fix: saturating cast prevents silent wraparound if MAX_FILE_BYTES is ever raised
+    let file_size = i32::try_from(file_bytes.len()).unwrap_or(i32::MAX);
 
     // Record metrics
     state
@@ -395,7 +445,7 @@ pub async fn playground_file(
         file_name: file_name.as_deref(),
         file_size_bytes: Some(file_size),
         file_type: Some(&mime_type),
-        processing_time_ms: Some(processing_time_ms as i32),
+        processing_time_ms: Some(processing_time_ms.round() as i32),
         page_count: None,
         detections_count: Some(detections_count),
         success: true,
@@ -416,11 +466,15 @@ pub async fn playground_file(
     }))
 }
 
-/// GET /api/v1/playground/history — Last 20 playground submissions
+/// GET /api/v1/playground/history — Playground submission history (L4: paginated)
 pub async fn playground_history(
     State(state): State<AppState>,
     Extension(auth_user): Extension<AuthUser>,
+    Query(params): Query<HistoryQuery>,
 ) -> Result<Json<Vec<PlaygroundHistoryEntry>>, PlaygroundError> {
+    let limit = params.limit.unwrap_or(20).clamp(1, 100);
+    let offset = params.offset.unwrap_or(0).max(0);
+
     let rows = sqlx::query_as::<
         _,
         (
@@ -443,10 +497,12 @@ pub async fn playground_history(
         WHERE user_id = $1
         AND request_type IN ('playground', 'playground_file')
         ORDER BY created_at DESC
-        LIMIT 20
+        LIMIT $2 OFFSET $3
         "#,
     )
     .bind(auth_user.user_id)
+    .bind(limit)
+    .bind(offset)
     .fetch_all(state.db.pool())
     .await?;
 
@@ -473,9 +529,9 @@ pub async fn playground_history(
 
 /// Supported MIME types for playground file upload.
 ///
-/// Both the full and abbreviated OpenXML MIME types are accepted because:
-/// - Browsers typically send the full form (`application/vnd.openxmlformats-officedocument...`)
-/// - The magic-byte detector (`TextExtractor::detect_mime`) returns the abbreviated form
+/// The abbreviated `application/vnd.openxmlformats` is accepted because the magic-byte
+/// detector may return it for DOCX files. It is mapped to the full DOCX MIME in the
+/// handler before extraction (M4 fix — prevents XLSX being misrouted to DOCX extractor).
 const SUPPORTED_MIME_TYPES: &[&str] = &[
     "text/plain",
     "text/csv",

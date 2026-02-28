@@ -219,6 +219,100 @@ async fn test_playground_text_too_long_rejected() {
 }
 
 // ============================================================================
+// File Upload Tests
+// ============================================================================
+
+#[tokio::test]
+async fn test_playground_file_upload_success() {
+    let app = setup_app().await;
+    let db = setup_db().await;
+
+    let email = format!("pg-file-{:.8}@example.com", uuid::Uuid::new_v4());
+    let tier_name = format!("pg-tier-{:.8}", uuid::Uuid::new_v4());
+    let (user_id, _, _) = fixtures::create_user_with_subscription(&db, &email, &tier_name)
+        .await
+        .expect("Failed to create user");
+
+    let token = get_auth_token(user_id, &email).await;
+
+    // Construct a multipart body with a text file containing PII
+    let boundary = "----TestBoundary12345";
+    let file_content = "Contact me at john@example.com or call +60123456789";
+    let body = format!(
+        "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"test.txt\"\r\nContent-Type: text/plain\r\n\r\n{file_content}\r\n--{boundary}--\r\n"
+    );
+
+    let request = Request::builder()
+        .uri("/api/v1/playground/file")
+        .method("POST")
+        .header(
+            "Content-Type",
+            format!("multipart/form-data; boundary={boundary}"),
+        )
+        .header("Authorization", format!("Bearer {}", token))
+        .body(Body::from(body))
+        .unwrap();
+
+    let response = app.oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = parse_json_response(response).await;
+    assert!(body.get("entities").is_some());
+    assert!(body.get("processingTimeMs").is_some());
+    assert!(body.get("textLength").is_some());
+    assert!(body.get("dailyUsage").is_some());
+
+    let entities = body["entities"].as_array().unwrap();
+    assert!(!entities.is_empty(), "Should detect at least one entity");
+
+    fixtures::cleanup_test_data(&db, &[user_id]).await;
+}
+
+#[tokio::test]
+async fn test_playground_file_upload_with_redact() {
+    let app = setup_app().await;
+    let db = setup_db().await;
+
+    let email = format!("pg-filerd-{:.8}@example.com", uuid::Uuid::new_v4());
+    let tier_name = format!("pg-tier-{:.8}", uuid::Uuid::new_v4());
+    let (user_id, _, _) = fixtures::create_user_with_subscription(&db, &email, &tier_name)
+        .await
+        .expect("Failed to create user");
+
+    let token = get_auth_token(user_id, &email).await;
+
+    let boundary = "----TestBoundary67890";
+    let file_content = "Email: secret@example.com";
+    let body = format!(
+        "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"pii.txt\"\r\nContent-Type: text/plain\r\n\r\n{file_content}\r\n--{boundary}\r\nContent-Disposition: form-data; name=\"redact\"\r\n\r\ntrue\r\n--{boundary}--\r\n"
+    );
+
+    let request = Request::builder()
+        .uri("/api/v1/playground/file")
+        .method("POST")
+        .header(
+            "Content-Type",
+            format!("multipart/form-data; boundary={boundary}"),
+        )
+        .header("Authorization", format!("Bearer {}", token))
+        .body(Body::from(body))
+        .unwrap();
+
+    let response = app.oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = parse_json_response(response).await;
+    assert!(body.get("redactedText").is_some());
+    let redacted = body["redactedText"].as_str().unwrap();
+    assert!(
+        !redacted.contains("secret@example.com"),
+        "Redacted text should not contain original email"
+    );
+
+    fixtures::cleanup_test_data(&db, &[user_id]).await;
+}
+
+// ============================================================================
 // History Tests
 // ============================================================================
 

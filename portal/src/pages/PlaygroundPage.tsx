@@ -137,6 +137,7 @@ export function PlaygroundPage() {
           <div className="border-b border-gray-200">
             <div className="flex" role="tablist" aria-label="Input mode">
               <button
+                id="tab-text"
                 role="tab"
                 aria-selected={mode === 'text'}
                 aria-controls="panel-text"
@@ -151,6 +152,7 @@ export function PlaygroundPage() {
                 Text
               </button>
               <button
+                id="tab-file"
                 role="tab"
                 aria-selected={mode === 'file'}
                 aria-controls="panel-file"
@@ -167,85 +169,86 @@ export function PlaygroundPage() {
             </div>
           </div>
 
-          <div className="p-4" id={`panel-${mode}`} role="tabpanel" aria-label={`${mode} input`}>
-            {mode === 'text' ? (
-              <textarea
-                value={text}
-                onChange={(e) => setText(e.target.value)}
-                placeholder="Paste text containing PII here... e.g. My email is john@example.com and my phone is +60123456789"
-                className="w-full h-64 p-3 text-sm border border-gray-300 rounded-md focus:ring-primary-500 focus:border-primary-500 resize-none"
-              />
-            ) : (
-              <div
-                onDragOver={(e) => e.preventDefault()}
-                onDrop={handleFileDrop}
-                className="h-64 border-2 border-dashed border-gray-300 rounded-md flex flex-col items-center justify-center text-gray-500 hover:border-primary-400 transition-colors"
-              >
-                {selectedFile ? (
-                  <div className="text-center">
-                    <FileText className="w-10 h-10 mx-auto mb-2 text-primary-500" />
-                    <p className="text-sm font-medium text-gray-900">
-                      {selectedFile.name}
-                    </p>
-                    <p className="text-xs text-gray-500 mt-1">
-                      {(selectedFile.size / 1024).toFixed(1)} KB
-                    </p>
-                    <button
-                      onClick={() => setSelectedFile(null)}
-                      className="mt-2 text-xs text-red-600 hover:text-red-700"
-                    >
-                      Remove
-                    </button>
-                  </div>
-                ) : (
-                  <div className="text-center">
-                    <Upload className="w-10 h-10 mx-auto mb-2" />
-                    <p className="text-sm">Drag and drop a file here, or</p>
-                    <label className="mt-2 inline-block cursor-pointer text-sm font-medium text-primary-600 hover:text-primary-500">
-                      browse files
-                      <input
-                        type="file"
-                        className="hidden"
-                        accept=".txt,.csv,.pdf,.docx"
-                        onChange={handleFileSelect}
-                      />
-                    </label>
-                    <p className="text-xs mt-2">TXT, CSV, PDF, DOCX</p>
-                  </div>
-                )}
-              </div>
-            )}
-
-            <div className="mt-4 flex items-center justify-between">
-              <label className="flex items-center gap-2 text-sm text-gray-700">
-                <input
-                  type="checkbox"
-                  checked={redact}
-                  onChange={(e) => setRedact(e.target.checked)}
-                  className="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
-                />
-                <Shield className="w-4 h-4 text-gray-400" />
-                Redact PII
-              </label>
-              <button
-                onClick={handleSubmit}
-                disabled={
-                  isSubmitting ||
-                  (mode === 'text' && !text.trim()) ||
-                  (mode === 'file' && !selectedFile)
-                }
-                className="inline-flex items-center px-4 py-2 bg-primary-600 text-white text-sm font-medium rounded-md hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-              >
-                {isSubmitting ? (
-                  <>
-                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                    Analyzing...
-                  </>
-                ) : (
-                  'Analyze'
-                )}
-              </button>
+          {/* N2 fix: render both panels so aria-controls always references existing DOM */}
+          <div className="p-4" id="panel-text" role="tabpanel" aria-labelledby="tab-text" hidden={mode !== 'text'}>
+            <textarea
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              placeholder="Paste text containing PII here... e.g. My email is john@example.com and my phone is +60123456789"
+              className="w-full h-64 p-3 text-sm border border-gray-300 rounded-md focus:ring-primary-500 focus:border-primary-500 resize-none"
+            />
+          </div>
+          <div className="p-4" id="panel-file" role="tabpanel" aria-labelledby="tab-file" hidden={mode !== 'file'}>
+            <div
+              onDragOver={(e) => e.preventDefault()}
+              onDrop={handleFileDrop}
+              aria-label="File drop zone"
+              className="h-64 border-2 border-dashed border-gray-300 rounded-md flex flex-col items-center justify-center text-gray-500 hover:border-primary-400 transition-colors"
+            >
+              {selectedFile ? (
+                <div className="text-center">
+                  <FileText className="w-10 h-10 mx-auto mb-2 text-primary-500" />
+                  <p className="text-sm font-medium text-gray-900">
+                    {selectedFile.name}
+                  </p>
+                  <p className="text-xs text-gray-500 mt-1">
+                    {(selectedFile.size / 1024).toFixed(1)} KB
+                  </p>
+                  <button
+                    onClick={() => setSelectedFile(null)}
+                    className="mt-2 text-xs text-red-600 hover:text-red-700"
+                  >
+                    Remove
+                  </button>
+                </div>
+              ) : (
+                <div className="text-center">
+                  <Upload className="w-10 h-10 mx-auto mb-2" />
+                  <p className="text-sm">Drag and drop a file here, or</p>
+                  <label className="mt-2 inline-block cursor-pointer text-sm font-medium text-primary-600 hover:text-primary-500">
+                    browse files
+                    <input
+                      type="file"
+                      className="hidden"
+                      accept=".txt,.csv,.pdf,.docx"
+                      onChange={handleFileSelect}
+                    />
+                  </label>
+                  <p className="text-xs mt-2">TXT, CSV, PDF, DOCX</p>
+                </div>
+              )}
             </div>
+          </div>
+
+          <div className="px-4 pb-4 flex items-center justify-between">
+            <label className="flex items-center gap-2 text-sm text-gray-700">
+              <input
+                type="checkbox"
+                checked={redact}
+                onChange={(e) => setRedact(e.target.checked)}
+                className="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+              />
+              <Shield className="w-4 h-4 text-gray-400" aria-hidden="true" />
+              Redact PII
+            </label>
+            <button
+              onClick={handleSubmit}
+              disabled={
+                isSubmitting ||
+                (mode === 'text' && !text.trim()) ||
+                (mode === 'file' && !selectedFile)
+              }
+              className="inline-flex items-center px-4 py-2 bg-primary-600 text-white text-sm font-medium rounded-md hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            >
+              {isSubmitting ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  Analyzing...
+                </>
+              ) : (
+                'Analyze'
+              )}
+            </button>
           </div>
         </div>
 

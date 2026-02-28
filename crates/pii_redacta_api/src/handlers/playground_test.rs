@@ -165,3 +165,54 @@ fn test_csv_mime_type_supported() {
     assert!(!is_supported_mime("image/png"));
     assert!(!is_supported_mime("application/json"));
 }
+
+/// M4: abbreviated OpenXML MIME should be accepted (mapped to DOCX in handler)
+#[test]
+fn test_abbreviated_openxml_mime_supported() {
+    assert!(is_supported_mime("application/vnd.openxmlformats"));
+    assert!(is_supported_mime(
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    ));
+    // XLSX-specific MIME should NOT be supported
+    assert!(!is_supported_mime(
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    ));
+}
+
+/// M3: file name sanitization
+#[test]
+fn test_sanitize_file_name_strips_path_separators() {
+    assert_eq!(sanitize_file_name("report.pdf"), "report.pdf");
+    assert_eq!(sanitize_file_name("../../etc/passwd"), "....etcpasswd");
+    assert_eq!(
+        sanitize_file_name("C:\\Users\\test\\file.txt"),
+        "C:Userstestfile.txt"
+    );
+}
+
+#[test]
+fn test_sanitize_file_name_strips_control_chars() {
+    assert_eq!(sanitize_file_name("file\x00name.pdf"), "filename.pdf");
+    assert_eq!(sanitize_file_name("file\nname.pdf"), "filename.pdf");
+}
+
+#[test]
+fn test_sanitize_file_name_truncates_to_255() {
+    let long_name = "a".repeat(300);
+    let sanitized = sanitize_file_name(&long_name);
+    assert_eq!(sanitized.len(), MAX_FILE_NAME_LEN);
+}
+
+#[test]
+fn test_sanitize_file_name_empty_becomes_unnamed() {
+    assert_eq!(sanitize_file_name(""), "unnamed");
+    assert_eq!(sanitize_file_name("/"), "unnamed");
+}
+
+/// L4: history query params defaults
+#[test]
+fn test_history_query_defaults() {
+    let q: HistoryQuery = serde_json::from_str("{}").unwrap();
+    assert_eq!(q.limit, None);
+    assert_eq!(q.offset, None);
+}
