@@ -34,6 +34,7 @@ impl IntoResponse for UsageError {
 
 /// Usage statistics response
 #[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct UsageStatsResponse {
     pub total_requests: i64,
     pub total_files: i64,
@@ -390,28 +391,65 @@ pub async fn get_dashboard_stats(
     }))
 }
 
-/// Usage summary response (lightweight)
+/// Composite usage summary response (matches portal expected shape)
 #[derive(Debug, Serialize)]
-pub struct UsageSummaryResponse {
-    /// Current month's request count (S9-R2-19: renamed for accuracy)
+pub struct UsageSummaryCompositeResponse {
+    pub summary: UsageSummaryDetail,
+    #[serde(rename = "dailyUsage")]
+    pub daily_usage: Vec<DailyUsageResponse>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct UsageSummaryDetail {
     #[serde(rename = "monthlyRequests")]
     pub monthly_requests: i64,
-    /// Current month's document count
     #[serde(rename = "monthlyDocuments")]
     pub monthly_documents: i64,
     #[serde(rename = "quotaUsage")]
     pub quota_usage: f64,
+    #[serde(rename = "documentsChange")]
+    pub documents_change: f64,
+    #[serde(rename = "requestsChange")]
+    pub requests_change: f64,
+    #[serde(rename = "quotaUsageChange")]
+    pub quota_usage_change: f64,
 }
 
-/// Get a lightweight usage summary for the authenticated user
+/// Query parameters for usage summary
+#[derive(Debug, Deserialize)]
+pub struct UsageSummaryQuery {
+    #[serde(default = "default_range")]
+    pub range: String,
+}
+
+fn default_range() -> String {
+    "30d".to_string()
+}
+
+/// Parse a range string like "7d", "30d", "90d" into a number of days
+fn parse_range_days(range: &str) -> i32 {
+    match range {
+        "7d" => 7,
+        "30d" => 30,
+        "90d" => 90,
+        _ => 30,
+    }
+}
+
+/// Get a usage summary with daily breakdown for the authenticated user
 pub async fn get_usage_summary(
     State(state): State<AppState>,
     Extension(auth_user): Extension<AuthUser>,
-) -> Result<Json<UsageSummaryResponse>, UsageError> {
+    Query(query): Query<UsageSummaryQuery>,
+) -> Result<Json<UsageSummaryCompositeResponse>, UsageError> {
     let now = Utc::now();
-    let month_start = chrono::NaiveDate::from_ymd_opt(now.year(), now.month(), 1)
+    let current_month_start = chrono::NaiveDate::from_ymd_opt(now.year(), now.month(), 1)
         .expect("current date always yields a valid first-of-month");
+    let prev_month_start = current_month_start
+        .checked_sub_months(Months::new(1))
+        .expect("subtracting 1 month from first-of-month is always valid");
 
+    // Current month totals
     let current = sqlx::query_as::<_, (i64, i64)>(
         r#"
         SELECT
@@ -422,11 +460,27 @@ pub async fn get_usage_summary(
         "#,
     )
     .bind(auth_user.user_id)
-    .bind(month_start)
+    .bind(current_month_start)
     .fetch_one(state.db.pool())
     .await?;
 
-    // S9-R2-08: ORDER BY + LIMIT 1
+    // Previous month totals for change %
+    let previous = sqlx::query_as::<_, (i64, i64)>(
+        r#"
+        SELECT
+            COUNT(*) as requests,
+            COALESCE(SUM(CASE WHEN file_name IS NOT NULL THEN 1 ELSE 0 END), 0) as documents
+        FROM usage_logs
+        WHERE user_id = $1 AND created_at >= $2 AND created_at < $3
+        "#,
+    )
+    .bind(auth_user.user_id)
+    .bind(prev_month_start)
+    .bind(current_month_start)
+    .fetch_one(state.db.pool())
+    .await?;
+
+    // Quota from tier (ORDER BY + LIMIT 1)
     let monthly_limit = sqlx::query_scalar::<_, Option<i64>>(
         r#"
         SELECT (t.limits->>'max_files_per_month')::bigint
@@ -447,9 +501,66 @@ pub async fn get_usage_summary(
         _ => 0.0,
     };
 
-    Ok(Json(UsageSummaryResponse {
-        monthly_requests: current.0,
-        monthly_documents: current.1,
-        quota_usage,
+    // Previous month quota usage for change calculation
+    let prev_quota_usage = match monthly_limit {
+        Some(limit) if limit > 0 => (previous.1 as f64 / limit as f64) * 100.0,
+        _ => 0.0,
+    };
+
+    let requests_change = if previous.0 > 0 {
+        ((current.0 - previous.0) as f64 / previous.0 as f64) * 100.0
+    } else {
+        0.0
+    };
+    let documents_change = if previous.1 > 0 {
+        ((current.1 - previous.1) as f64 / previous.1 as f64) * 100.0
+    } else {
+        0.0
+    };
+    let quota_usage_change = quota_usage - prev_quota_usage;
+
+    // Daily usage for the requested range
+    let days = parse_range_days(&query.range);
+    let start_date = now - Duration::days(days as i64);
+
+    let rows = sqlx::query_as::<_, (chrono::NaiveDate, i64, i64, i64)>(
+        r#"
+        SELECT
+            DATE(created_at) as date,
+            COALESCE(SUM(CASE WHEN request_type LIKE 'api_%' THEN 1 ELSE 0 END), 0) as requests,
+            COALESCE(SUM(CASE WHEN file_name IS NOT NULL THEN 1 ELSE 0 END), 0) as files,
+            COALESCE(SUM(page_count), 0) as pages
+        FROM usage_logs
+        WHERE user_id = $1
+        AND created_at >= $2
+        GROUP BY DATE(created_at)
+        ORDER BY date ASC
+        "#,
+    )
+    .bind(auth_user.user_id)
+    .bind(start_date)
+    .fetch_all(state.db.pool())
+    .await?;
+
+    let daily_usage: Vec<DailyUsageResponse> = rows
+        .into_iter()
+        .map(|(date, requests, files, pages)| DailyUsageResponse {
+            date: date.to_string(),
+            requests,
+            files,
+            pages,
+        })
+        .collect();
+
+    Ok(Json(UsageSummaryCompositeResponse {
+        summary: UsageSummaryDetail {
+            monthly_requests: current.0,
+            monthly_documents: current.1,
+            quota_usage,
+            documents_change,
+            requests_change,
+            quota_usage_change,
+        },
+        daily_usage,
     }))
 }

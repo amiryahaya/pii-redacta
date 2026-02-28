@@ -1,4 +1,4 @@
-import { Link, Outlet, useLocation } from 'react-router-dom'
+import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import {
   LayoutDashboard,
   Key,
@@ -8,6 +8,7 @@ import {
   Shield,
 } from 'lucide-react'
 import { useAuthStore } from '../stores/authStore'
+import { authApi } from '../lib/api'
 
 const navigation = [
   { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
@@ -18,10 +19,17 @@ const navigation = [
 
 export function Layout() {
   const location = useLocation()
+  const navigate = useNavigate()
   const { user, clearAuth } = useAuthStore()
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    try {
+      await authApi.logout()
+    } catch {
+      // Best-effort — clear local state regardless
+    }
     clearAuth()
+    navigate('/login')
   }
 
   return (
@@ -66,7 +74,7 @@ export function Layout() {
           <div className="flex items-center mb-3">
             <div className="w-8 h-8 rounded-full bg-primary-100 flex items-center justify-center">
               <span className="text-sm font-medium text-primary-700">
-                {user?.displayName?.[0] || user?.email[0].toUpperCase()}
+                {user?.displayName?.[0] || user?.email?.[0]?.toUpperCase() || '?'}
               </span>
             </div>
             <div className="ml-3">

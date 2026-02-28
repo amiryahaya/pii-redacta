@@ -1,6 +1,8 @@
 //! API Key Management Integration Tests
 //!
-//! These tests require PostgreSQL to be running.
+//! Covers: CRUD endpoints, 401 rejection, DB-level validation,
+//! tier limits, subscriptions, rate-limit tracking, and edge cases.
+//!
 //! Run with: cargo test --test api_keys_integration_test
 
 mod common;
@@ -26,6 +28,10 @@ async fn get_auth_token(user_id: uuid::Uuid, email: &str) -> String {
     let config = JwtConfig::new(test_jwt_secret(), 24).expect("Valid JWT config");
     generate_token(user_id, email, false, &config).expect("Should generate token")
 }
+
+// ============================================================================
+// Authenticated CRUD Tests
+// ============================================================================
 
 #[tokio::test]
 async fn test_create_api_key_success() {
@@ -66,8 +72,8 @@ async fn test_create_api_key_success() {
     );
     let body = parse_json_response(response).await;
     assert!(
-        body.get("full_key").is_some(),
-        "Response should contain full_key"
+        body.get("fullKey").is_some(),
+        "Response should contain fullKey"
     );
     assert!(body.get("id").is_some(), "Response should contain id");
     assert_eq!(body["name"], "Test API Key");
@@ -76,6 +82,159 @@ async fn test_create_api_key_success() {
     // Clean up
     fixtures::cleanup_test_data(&db, &[user_id]).await;
 }
+
+#[tokio::test]
+async fn test_list_api_keys_authenticated() {
+    let app = setup_app().await;
+    let db = setup_db().await;
+
+    let email = format!("test-listkeys-{:.8}@example.com", uuid::Uuid::new_v4());
+    let tier_name = format!("test-tier-{:.8}", uuid::Uuid::new_v4());
+    let (user_id, _, _) = fixtures::create_user_with_subscription(&db, &email, &tier_name)
+        .await
+        .expect("Failed to create user");
+
+    let token = get_auth_token(user_id, &email).await;
+
+    let request = Request::builder()
+        .uri("/api/v1/api-keys")
+        .method("GET")
+        .header("Authorization", format!("Bearer {}", token))
+        .body(Body::empty())
+        .unwrap();
+
+    let response = app.oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = parse_json_response(response).await;
+    assert!(body.is_array(), "Expected array of API keys");
+
+    fixtures::cleanup_test_data(&db, &[user_id]).await;
+}
+
+#[tokio::test]
+async fn test_delete_api_key_authenticated() {
+    let app = setup_app().await;
+    let db = setup_db().await;
+
+    let email = format!("test-delkey-{:.8}@example.com", uuid::Uuid::new_v4());
+    let tier_name = format!("test-tier-{:.8}", uuid::Uuid::new_v4());
+    let (user_id, _, _) = fixtures::create_user_with_subscription(&db, &email, &tier_name)
+        .await
+        .expect("Failed to create user");
+
+    let token = get_auth_token(user_id, &email).await;
+
+    // Create an API key first
+    let create_request = Request::builder()
+        .uri("/api/v1/api-keys")
+        .method("POST")
+        .header("Content-Type", "application/json")
+        .header("Authorization", format!("Bearer {}", token))
+        .body(Body::from(
+            json!({
+                "name": "Key to Delete",
+                "environment": "test",
+                "expires_days": 30
+            })
+            .to_string(),
+        ))
+        .unwrap();
+
+    let create_response = app.clone().oneshot(create_request).await.unwrap();
+    assert_eq!(create_response.status(), StatusCode::OK);
+
+    let create_body = parse_json_response(create_response).await;
+    let key_id = create_body["id"].as_str().unwrap();
+
+    // Delete the key
+    let delete_request = Request::builder()
+        .uri(format!("/api/v1/api-keys/{}", key_id))
+        .method("DELETE")
+        .header("Authorization", format!("Bearer {}", token))
+        .body(Body::empty())
+        .unwrap();
+
+    let delete_response = app.clone().oneshot(delete_request).await.unwrap();
+    assert_eq!(delete_response.status(), StatusCode::NO_CONTENT);
+
+    // Verify key no longer appears in list (revoked keys may still appear but inactive)
+    let list_request = Request::builder()
+        .uri("/api/v1/api-keys")
+        .method("GET")
+        .header("Authorization", format!("Bearer {}", token))
+        .body(Body::empty())
+        .unwrap();
+
+    let list_response = app.oneshot(list_request).await.unwrap();
+    assert_eq!(list_response.status(), StatusCode::OK);
+
+    let keys = parse_json_response(list_response).await;
+    let active_keys: Vec<&Value> = keys
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|k| k["id"] == key_id && k["isActive"] == true)
+        .collect();
+    assert!(active_keys.is_empty(), "Deleted key should not be active");
+
+    fixtures::cleanup_test_data(&db, &[user_id]).await;
+}
+
+#[tokio::test]
+async fn test_revoke_api_key_authenticated() {
+    let app = setup_app().await;
+    let db = setup_db().await;
+
+    let email = format!("test-revkey-{:.8}@example.com", uuid::Uuid::new_v4());
+    let tier_name = format!("test-tier-{:.8}", uuid::Uuid::new_v4());
+    let (user_id, _, _) = fixtures::create_user_with_subscription(&db, &email, &tier_name)
+        .await
+        .expect("Failed to create user");
+
+    let token = get_auth_token(user_id, &email).await;
+
+    // Create an API key first
+    let create_request = Request::builder()
+        .uri("/api/v1/api-keys")
+        .method("POST")
+        .header("Content-Type", "application/json")
+        .header("Authorization", format!("Bearer {}", token))
+        .body(Body::from(
+            json!({
+                "name": "Key to Revoke",
+                "environment": "live"
+            })
+            .to_string(),
+        ))
+        .unwrap();
+
+    let create_response = app.clone().oneshot(create_request).await.unwrap();
+    assert_eq!(create_response.status(), StatusCode::OK);
+
+    let create_body = parse_json_response(create_response).await;
+    let key_id = create_body["id"].as_str().unwrap();
+
+    // Revoke the key with a reason
+    let revoke_request = Request::builder()
+        .uri(format!("/api/v1/api-keys/{}/revoke", key_id))
+        .method("POST")
+        .header("Content-Type", "application/json")
+        .header("Authorization", format!("Bearer {}", token))
+        .body(Body::from(
+            json!({ "reason": "No longer needed" }).to_string(),
+        ))
+        .unwrap();
+
+    let revoke_response = app.oneshot(revoke_request).await.unwrap();
+    assert_eq!(revoke_response.status(), StatusCode::NO_CONTENT);
+
+    fixtures::cleanup_test_data(&db, &[user_id]).await;
+}
+
+// ============================================================================
+// 401 Rejection Tests — No Token / Invalid Token
+// ============================================================================
 
 #[tokio::test]
 async fn test_list_api_keys_unauthorized() {
@@ -89,14 +248,195 @@ async fn test_list_api_keys_unauthorized() {
 
     let response = app.oneshot(request).await.unwrap();
 
-    // Should either require authentication (401) or not exist (404)
-    // The API keys endpoints may not be fully implemented yet
     assert!(
         response.status() == StatusCode::UNAUTHORIZED || response.status() == StatusCode::NOT_FOUND,
         "Expected 401 or 404, got {}",
         response.status()
     );
 }
+
+#[tokio::test]
+async fn test_create_api_key_requires_auth() {
+    let app = setup_app().await;
+
+    let request = Request::builder()
+        .uri("/api/v1/api-keys")
+        .method("POST")
+        .header("Content-Type", "application/json")
+        .body(Body::from(
+            json!({
+                "name": "My Key",
+                "environment": "test"
+            })
+            .to_string(),
+        ))
+        .unwrap();
+
+    let response = app.oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn test_delete_api_key_requires_auth() {
+    let app = setup_app().await;
+
+    let request = Request::builder()
+        .uri("/api/v1/api-keys/00000000-0000-0000-0000-000000000000")
+        .method("DELETE")
+        .body(Body::empty())
+        .unwrap();
+
+    let response = app.oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn test_revoke_api_key_requires_auth() {
+    let app = setup_app().await;
+
+    let request = Request::builder()
+        .uri("/api/v1/api-keys/00000000-0000-0000-0000-000000000000/revoke")
+        .method("POST")
+        .header("Content-Type", "application/json")
+        .body(Body::from(json!({"reason": "test"}).to_string()))
+        .unwrap();
+
+    let response = app.oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn test_api_keys_rejects_invalid_token() {
+    let app = setup_app().await;
+
+    let request = Request::builder()
+        .uri("/api/v1/api-keys")
+        .method("GET")
+        .header("Authorization", "Bearer invalid.token.here")
+        .body(Body::empty())
+        .unwrap();
+
+    let response = app.oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+// ============================================================================
+// Edge Cases & Validation
+// ============================================================================
+
+#[tokio::test]
+async fn test_delete_nonexistent_api_key() {
+    let app = setup_app().await;
+    let db = setup_db().await;
+
+    let email = format!("test-delnone-{:.8}@example.com", uuid::Uuid::new_v4());
+    let tier_name = format!("test-tier-{:.8}", uuid::Uuid::new_v4());
+    let (user_id, _, _) = fixtures::create_user_with_subscription(&db, &email, &tier_name)
+        .await
+        .expect("Failed to create user");
+
+    let token = get_auth_token(user_id, &email).await;
+
+    let request = Request::builder()
+        .uri("/api/v1/api-keys/00000000-0000-0000-0000-000000000000")
+        .method("DELETE")
+        .header("Authorization", format!("Bearer {}", token))
+        .body(Body::empty())
+        .unwrap();
+
+    let response = app.oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+
+    fixtures::cleanup_test_data(&db, &[user_id]).await;
+}
+
+#[tokio::test]
+async fn test_create_api_key_invalid_environment() {
+    let app = setup_app().await;
+    let db = setup_db().await;
+
+    let email = format!("test-invenv-{:.8}@example.com", uuid::Uuid::new_v4());
+    let tier_name = format!("test-tier-{:.8}", uuid::Uuid::new_v4());
+    let (user_id, _, _) = fixtures::create_user_with_subscription(&db, &email, &tier_name)
+        .await
+        .expect("Failed to create user");
+
+    let token = get_auth_token(user_id, &email).await;
+
+    let request = Request::builder()
+        .uri("/api/v1/api-keys")
+        .method("POST")
+        .header("Content-Type", "application/json")
+        .header("Authorization", format!("Bearer {}", token))
+        .body(Body::from(
+            json!({
+                "name": "Bad Env Key",
+                "environment": "invalid"
+            })
+            .to_string(),
+        ))
+        .unwrap();
+
+    let response = app.oneshot(request).await.unwrap();
+    assert_eq!(
+        response.status(),
+        StatusCode::BAD_REQUEST,
+        "Invalid environment should return 400"
+    );
+
+    let body = parse_json_response(response).await;
+    let message = body["error"]["message"].as_str().unwrap_or("");
+    assert!(
+        message.to_lowercase().contains("environment"),
+        "Error message should mention environment, got: {}",
+        message
+    );
+
+    fixtures::cleanup_test_data(&db, &[user_id]).await;
+}
+
+#[tokio::test]
+async fn test_create_api_key_name_too_long() {
+    let app = setup_app().await;
+    let db = setup_db().await;
+
+    let email = format!("test-longname-{:.8}@example.com", uuid::Uuid::new_v4());
+    let tier_name = format!("test-tier-{:.8}", uuid::Uuid::new_v4());
+    let (user_id, _, _) = fixtures::create_user_with_subscription(&db, &email, &tier_name)
+        .await
+        .expect("Failed to create user");
+
+    let token = get_auth_token(user_id, &email).await;
+
+    let long_name = "A".repeat(101); // MAX_KEY_NAME_LENGTH is 100
+
+    let request = Request::builder()
+        .uri("/api/v1/api-keys")
+        .method("POST")
+        .header("Content-Type", "application/json")
+        .header("Authorization", format!("Bearer {}", token))
+        .body(Body::from(
+            json!({
+                "name": long_name,
+                "environment": "test"
+            })
+            .to_string(),
+        ))
+        .unwrap();
+
+    let response = app.oneshot(request).await.unwrap();
+    assert_eq!(
+        response.status(),
+        StatusCode::BAD_REQUEST,
+        "Name > 100 chars should return 400"
+    );
+
+    fixtures::cleanup_test_data(&db, &[user_id]).await;
+}
+
+// ============================================================================
+// Database-Level Tests
+// ============================================================================
 
 #[tokio::test]
 async fn test_api_key_validation() {

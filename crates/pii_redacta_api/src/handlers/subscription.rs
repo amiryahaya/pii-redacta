@@ -46,6 +46,7 @@ impl IntoResponse for SubscriptionError {
 
 /// Subscription response
 #[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SubscriptionResponse {
     pub id: String,
     pub status: String,
@@ -57,6 +58,7 @@ pub struct SubscriptionResponse {
 
 /// Tier response
 #[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TierResponse {
     pub id: String,
     pub name: String,

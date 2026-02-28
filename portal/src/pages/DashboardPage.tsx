@@ -91,18 +91,18 @@ export function DashboardPage() {
   const stats = [
     {
       name: 'Documents Processed',
-      value: dashboard ? formatNumber(dashboard.stats.totalDocuments) : '0',
+      value: dashboard ? formatNumber(dashboard.stats.monthlyDocuments) : '0',
       icon: FileText,
       change: dashboard?.stats.documentsChange ?? 0,
-      trend: dashboard?.stats.documentsChange && dashboard.stats.documentsChange >= 0 ? 'up' : 'down',
+      trend: (dashboard?.stats.documentsChange ?? 0) >= 0 ? 'up' : 'down',
       href: '/usage',
     },
     {
       name: 'API Requests',
-      value: dashboard ? formatNumber(dashboard.stats.totalRequests) : '0',
+      value: dashboard ? formatNumber(dashboard.stats.monthlyRequests) : '0',
       icon: BarChart3,
       change: dashboard?.stats.requestsChange ?? 0,
-      trend: dashboard?.stats.requestsChange && dashboard.stats.requestsChange >= 0 ? 'up' : 'down',
+      trend: (dashboard?.stats.requestsChange ?? 0) >= 0 ? 'up' : 'down',
       href: '/usage',
     },
     {

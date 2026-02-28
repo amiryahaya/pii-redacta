@@ -26,6 +26,7 @@ const MAX_REVOKE_REASON_LENGTH: usize = 500;
 
 /// API Key response for portal (without sensitive data)
 #[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ApiKeyResponse {
     pub id: String,
     pub name: String,
@@ -40,6 +41,7 @@ pub struct ApiKeyResponse {
 /// Generated API key response (includes full key - shown once)
 /// Note: Debug intentionally not derived to prevent full_key from appearing in logs (S9-R3-08)
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CreateApiKeyResponse {
     pub id: String,
     pub name: String,

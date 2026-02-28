@@ -8,6 +8,7 @@
 pub mod api_key_manager;
 pub mod models;
 pub mod tier_manager;
+pub mod usage;
 
 use sqlx::{Pool, Postgres};
 use std::sync::Arc;

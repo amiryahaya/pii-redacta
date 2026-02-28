@@ -92,7 +92,9 @@ impl IntoResponse for AuthHandlerError {
 pub struct RegisterRequest {
     pub email: String,
     pub password: String,
+    #[serde(rename = "displayName")]
     pub display_name: Option<String>,
+    #[serde(rename = "companyName")]
     pub company_name: Option<String>,
 }
 
@@ -115,7 +117,9 @@ pub struct UpdateUserRequest {
 /// Change password request (no Debug to prevent password leaks in logs)
 #[derive(Deserialize)]
 pub struct ChangePasswordRequest {
+    #[serde(rename = "currentPassword")]
     pub current_password: String,
+    #[serde(rename = "newPassword")]
     pub new_password: String,
 }
 

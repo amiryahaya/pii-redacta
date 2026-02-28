@@ -72,12 +72,6 @@ export interface UsageStats {
   storageUsed: number
   monthlyFiles: number
   monthlyLimit: number | null
-  quotaUsage: number
-  quotaUsageChange: number
-  requestsChange: number
-  documentsChange: number
-  successRate: number
-  successRateChange: number
 }
 
 export interface DailyUsage {
@@ -85,20 +79,15 @@ export interface DailyUsage {
   requests: number
   files: number
   pages: number
-  avgResponseTime: number
-  successCount: number
-  errorCount: number
 }
 
 export interface UsageSummary {
-  totalRequests: number
-  totalDocuments: number
+  monthlyRequests: number
+  monthlyDocuments: number
   quotaUsage: number
   quotaUsageChange: number
   requestsChange: number
   documentsChange: number
-  successRate: number
-  successRateChange: number
 }
 
 export interface LoginCredentials {
@@ -128,8 +117,8 @@ export interface UserPreferences {
 
 export interface DashboardStats {
   stats: {
-    totalRequests: number
-    totalDocuments: number
+    monthlyRequests: number
+    monthlyDocuments: number
     quotaUsage: number
     documentsChange: number
     requestsChange: number

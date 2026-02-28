@@ -98,9 +98,9 @@ export const userApi = {
     api.patch<User>('/users/profile', data),
 
   updatePreferences: (data: UserPreferences) =>
-    api.patch<UserPreferences>('/users/preferences', data),
+    api.patch<UserPreferences>('/users/me/preferences', data),
 
-  getPreferences: () => api.get<UserPreferences>('/users/preferences'),
+  getPreferences: () => api.get<UserPreferences>('/users/me/preferences'),
 }
 
 // Dashboard API

@@ -8,8 +8,6 @@ import {
   CartesianGrid,
   Tooltip,
   ResponsiveContainer,
-  LineChart,
-  Line,
   AreaChart,
   Area,
 } from 'recharts'
@@ -149,59 +147,27 @@ export function UsagePage() {
             </div>
           </div>
 
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <div className="bg-white shadow rounded-lg p-6">
-              <div className="flex items-center justify-between mb-6">
-                <h3 className="text-lg font-medium text-gray-900">Documents Processed</h3>
-                <TrendingUp className="h-5 w-5 text-gray-400" aria-hidden="true" />
-              </div>
-              <div className="h-64">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={usage.dailyUsage}>
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis
-                      dataKey="date"
-                      tickFormatter={(date) => formatDate(date)}
-                    />
-                    <YAxis />
-                    <Tooltip
-                      labelFormatter={(label) => formatDate(label)}
-                      formatter={(value: number) => [formatNumber(value), 'Documents']}
-                    />
-                    <Bar dataKey="documents" fill="#4f46e5" radius={[4, 4, 0, 0]} />
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
+          <div className="bg-white shadow rounded-lg p-6">
+            <div className="flex items-center justify-between mb-6">
+              <h3 className="text-lg font-medium text-gray-900">Documents Processed</h3>
+              <TrendingUp className="h-5 w-5 text-gray-400" aria-hidden="true" />
             </div>
-
-            <div className="bg-white shadow rounded-lg p-6">
-              <div className="flex items-center justify-between mb-6">
-                <h3 className="text-lg font-medium text-gray-900">Response Time (ms)</h3>
-                <Activity className="h-5 w-5 text-gray-400" aria-hidden="true" />
-              </div>
-              <div className="h-64">
-                <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={usage.dailyUsage}>
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis
-                      dataKey="date"
-                      tickFormatter={(date) => formatDate(date)}
-                    />
-                    <YAxis />
-                    <Tooltip
-                      labelFormatter={(label) => formatDate(label)}
-                      formatter={(value: number) => [value.toFixed(0), 'ms']}
-                    />
-                    <Line
-                      type="monotone"
-                      dataKey="avgResponseTime"
-                      stroke="#10b981"
-                      strokeWidth={2}
-                      dot={false}
-                    />
-                  </LineChart>
-                </ResponsiveContainer>
-              </div>
+            <div className="h-64">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={usage.dailyUsage}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis
+                    dataKey="date"
+                    tickFormatter={(date) => formatDate(date)}
+                  />
+                  <YAxis />
+                  <Tooltip
+                    labelFormatter={(label) => formatDate(label)}
+                    formatter={(value: number) => [formatNumber(value), 'Documents']}
+                  />
+                  <Bar dataKey="files" fill="#4f46e5" radius={[4, 4, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
             </div>
           </div>
         </>
@@ -288,22 +254,16 @@ function TimeRangeSelector({
 function StatsCards({ summary }: { summary: UsageSummary }) {
   const stats = [
     {
-      label: 'Total Requests',
-      value: formatNumber(summary.totalRequests),
+      label: 'Monthly Requests',
+      value: formatNumber(summary.monthlyRequests),
       change: summary.requestsChange,
       trend: summary.requestsChange >= 0 ? 'up' : 'down',
     },
     {
       label: 'Documents Processed',
-      value: formatNumber(summary.totalDocuments),
+      value: formatNumber(summary.monthlyDocuments),
       change: summary.documentsChange,
       trend: summary.documentsChange >= 0 ? 'up' : 'down',
-    },
-    {
-      label: 'Success Rate',
-      value: `${summary.successRate.toFixed(1)}%`,
-      change: summary.successRateChange,
-      trend: summary.successRateChange >= 0 ? 'up' : 'down',
     },
     {
       label: 'Quota Usage',
@@ -314,7 +274,7 @@ function StatsCards({ summary }: { summary: UsageSummary }) {
   ]
 
   return (
-    <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4">
+    <div className="grid grid-cols-1 gap-5 sm:grid-cols-3">
       {stats.map((stat) => (
         <div key={stat.label} className="bg-white overflow-hidden shadow rounded-lg">
           <div className="px-4 py-5 sm:p-6">

@@ -13,7 +13,9 @@ pub mod middleware;
 mod security_test;
 
 use axum::{
-    middleware::{from_fn, map_response},
+    extract::State,
+    middleware::{from_fn, from_fn_with_state, map_response, Next},
+    response::IntoResponse,
     routing::{delete, get, post, put},
     Router,
 };
@@ -36,6 +38,8 @@ pub struct AppState {
     pub jwt_config: JwtConfig,
     /// Base64-encoded server secret for API key HMAC (separate from JWT secret)
     pub api_key_secret: String,
+    /// In-memory rate limiter for login/register endpoints
+    pub rate_limiter: Arc<middleware::rate_limit::InMemoryRateLimiter>,
 }
 
 /// Create the API router (MVP version without auth)
@@ -89,14 +93,21 @@ pub fn create_app_with_auth(
     cors_origins: Option<Vec<String>>,
 ) -> Result<Router, jwt::JwtError> {
     let jwt_config = JwtConfig::new(jwt_secret, 24)?;
+    let rate_limiter = Arc::new(middleware::rate_limit::InMemoryRateLimiter::new());
     let state = AppState {
         db,
         jwt_config: jwt_config.clone(),
         api_key_secret: api_key_secret.to_string(),
+        rate_limiter,
     };
 
     // Protected routes — require valid JWT token
     let protected = Router::new()
+        // Detection (authenticated)
+        .route(
+            "/api/v1/detect",
+            post(handlers::detection::detect_authenticated),
+        )
         // Auth (authenticated)
         .route("/api/v1/auth/me", get(handlers::auth::me))
         .route(
@@ -159,17 +170,22 @@ pub fn create_app_with_auth(
             auth::jwt_auth_middleware(config, req, next)
         }));
 
+    // Rate-limited auth routes (10 requests/minute per IP)
+    let rate_limited_auth = Router::new()
+        .route("/api/v1/auth/register", post(handlers::auth::register))
+        .route("/api/v1/auth/login", post(handlers::auth::login))
+        .route_layer(from_fn_with_state(
+            state.clone(),
+            login_rate_limit_middleware,
+        ));
+
     // Public routes — no auth required
-    // TODO(S9-R4-03): Apply IP-based rate limiting to login/register endpoints.
-    // In production, enforce rate limits at the reverse proxy (e.g., nginx limit_req)
-    // to prevent brute-force attacks on these unauthenticated endpoints.
     let public = Router::new()
         .route("/health", get(handlers::health::health))
         .route("/health/deep", get(handlers::health::health_deep))
-        .route("/api/v1/auth/register", post(handlers::auth::register))
-        .route("/api/v1/auth/login", post(handlers::auth::login))
         .route("/api/v1/auth/logout", post(handlers::auth::logout))
-        .route("/api/v1/tiers", get(handlers::subscription::list_tiers));
+        .route("/api/v1/tiers", get(handlers::subscription::list_tiers))
+        .merge(rate_limited_auth);
 
     // Merge public and protected, apply shared middleware
     let app = public
@@ -241,6 +257,42 @@ fn create_cors_layer(origins: Option<Vec<String>>) -> CorsLayer {
             .allow_credentials(true)
         }
     }
+}
+
+/// Rate limit middleware for login/register endpoints.
+/// Allows 10 requests per minute per IP address.
+async fn login_rate_limit_middleware(
+    State(state): State<AppState>,
+    req: axum::extract::Request,
+    next: Next,
+) -> axum::response::Response {
+    // Extract IP from X-Forwarded-For header or ConnectInfo.
+    // Skip rate limiting when IP is indeterminate (e.g., in tests without ConnectInfo).
+    let ip = req
+        .headers()
+        .get("x-forwarded-for")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.split(',').next())
+        .map(|s| s.trim().to_string())
+        .or_else(|| {
+            req.extensions()
+                .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
+                .map(|ci| ci.0.ip().to_string())
+        });
+
+    if let Some(ref ip) = ip {
+        if !state.rate_limiter.check_ip(ip, 10, 60) {
+            let body = serde_json::json!({
+                "error": {
+                    "code": 429,
+                    "message": "Too many requests. Please try again later.",
+                }
+            });
+            return (axum::http::StatusCode::TOO_MANY_REQUESTS, axum::Json(body)).into_response();
+        }
+    }
+
+    next.run(req).await
 }
 
 /// Initialize tracing subscriber for structured logging
