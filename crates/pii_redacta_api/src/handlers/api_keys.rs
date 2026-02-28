@@ -177,7 +177,14 @@ pub async fn create_api_key(
 
     let api_key_manager = ApiKeyManager::new(state.db.clone(), &state.api_key_secret)?;
 
+    // Calculate expiration
+    let expires_at = req
+        .expires_days
+        .map(|days| Utc::now() + chrono::Duration::days(days as i64));
+
     // Check user's tier limit for API keys
+    // S9-R4-11: Minor TOCTOU race between count and creation is acceptable —
+    // worst case is one extra key beyond the limit under concurrent requests.
     let subscription = sqlx::query_as::<_, (Uuid,)>(
         r#"
         SELECT s.tier_id FROM subscriptions s
@@ -206,11 +213,6 @@ pub async fn create_api_key(
             }
         }
     }
-
-    // Calculate expiration
-    let expires_at = req
-        .expires_days
-        .map(|days| Utc::now() + chrono::Duration::days(days as i64));
 
     // Generate API key — generate_key returns id and created_at from RETURNING clause
     let generated = api_key_manager

@@ -160,8 +160,12 @@ pub fn create_app_with_auth(
         }));
 
     // Public routes — no auth required
+    // TODO(S9-R4-03): Apply IP-based rate limiting to login/register endpoints.
+    // In production, enforce rate limits at the reverse proxy (e.g., nginx limit_req)
+    // to prevent brute-force attacks on these unauthenticated endpoints.
     let public = Router::new()
         .route("/health", get(handlers::health::health))
+        .route("/health/deep", get(handlers::health::health_deep))
         .route("/api/v1/auth/register", post(handlers::auth::register))
         .route("/api/v1/auth/login", post(handlers::auth::login))
         .route("/api/v1/auth/logout", post(handlers::auth::logout))

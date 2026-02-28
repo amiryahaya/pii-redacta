@@ -120,7 +120,8 @@ pub struct ChangePasswordRequest {
 }
 
 /// Auth response with user and token
-#[derive(Debug, Serialize)]
+/// Note: Debug intentionally not derived to prevent JWT token leaking in logs (S9-R4-02)
+#[derive(Serialize)]
 pub struct AuthResponse {
     pub user: UserResponse,
     pub token: String,

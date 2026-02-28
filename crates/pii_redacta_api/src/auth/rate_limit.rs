@@ -6,7 +6,10 @@
 use redis::{AsyncCommands, Client as RedisClient};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-/// Rate limiter using Redis sliding window
+/// Rate limiter using Redis fixed window
+///
+/// Note (S9-R4-08): Fixed-window rate limiting allows up to 2x burst at window boundaries.
+/// Consider sliding window (e.g., Redis sorted sets) for stricter enforcement in the future.
 #[derive(Clone)]
 pub struct RateLimiter {
     redis: RedisClient,
@@ -187,7 +190,9 @@ impl RateLimiter {
         let key = format!("rate_limit:files:{}:{}", user_id, month);
 
         // Read-only: use GET instead of INCR to avoid counting failed requests
-        let count: u64 = conn.get(&key).await.unwrap_or(0);
+        // S9-R4-10: Propagate Redis connection errors (fail closed).
+        // Redis returns nil for non-existent keys, which maps to None here.
+        let count: u64 = conn.get::<_, Option<u64>>(&key).await?.unwrap_or(0);
 
         if count >= max {
             // Calculate seconds until next month

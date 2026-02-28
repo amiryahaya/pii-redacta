@@ -76,7 +76,8 @@ impl std::str::FromStr for ApiKeyEnvironment {
 }
 
 /// A generated API key (plaintext) - only returned once at creation
-#[derive(Debug, Clone)]
+/// Note: Debug intentionally not derived to prevent full_key leaking in logs (S9-R4-06)
+#[derive(Clone)]
 pub struct GeneratedApiKey {
     /// Database-assigned ID
     pub id: Uuid,
@@ -395,11 +396,12 @@ impl ApiKeyManager {
     // Helper Methods
     // ============================================
 
-    /// Generate cryptographically secure random bytes
+    /// Generate cryptographically secure random bytes (S9-R4-07: uses OsRng for strongest guarantee)
     fn generate_secure_random(len: usize) -> Vec<u8> {
+        use rand::rngs::OsRng;
         use rand::RngCore;
         let mut bytes = vec![0u8; len];
-        rand::thread_rng().fill_bytes(&mut bytes);
+        OsRng.fill_bytes(&mut bytes);
         bytes
     }
 

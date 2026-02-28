@@ -262,15 +262,31 @@ impl TierManager {
         Ok(())
     }
 
-    /// Invalidate all tier caches
+    /// Invalidate all tier caches (S9-R4-05: uses SCAN instead of KEYS to avoid blocking Redis)
     pub async fn invalidate_all_cache(&self) -> Result<()> {
         if let Some(redis) = &self.redis {
             let mut conn = redis.get_multiplexed_async_connection().await?;
 
-            // Find and delete all tier keys
-            let keys: Vec<String> = conn.keys(format!("{}*", TIER_CACHE_PREFIX)).await?;
-            if !keys.is_empty() {
-                conn.del::<_, ()>(&keys).await?;
+            // Use SCAN for non-blocking iteration instead of KEYS (which blocks Redis)
+            let pattern = format!("{}*", TIER_CACHE_PREFIX);
+            let mut cursor: u64 = 0;
+            loop {
+                let (next_cursor, batch): (u64, Vec<String>) = redis::cmd("SCAN")
+                    .arg(cursor)
+                    .arg("MATCH")
+                    .arg(&pattern)
+                    .arg("COUNT")
+                    .arg(100)
+                    .query_async(&mut conn)
+                    .await?;
+
+                if !batch.is_empty() {
+                    conn.del::<_, ()>(&batch).await?;
+                }
+                if next_cursor == 0 {
+                    break;
+                }
+                cursor = next_cursor;
             }
 
             // Also delete tier list

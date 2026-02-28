@@ -235,6 +235,8 @@ pub async fn jwt_auth_middleware(
     let user_id = claims.sub.parse().map_err(|_| AuthError::InvalidToken)?;
 
     // Store user info in request extensions
+    // TODO(S9-R4-04): is_admin is trusted from JWT claims without server-side re-verification.
+    // If admin-gated endpoints are added, re-fetch is_admin from the database for those routes.
     request.extensions_mut().insert(AuthUser {
         user_id,
         email: claims.email,

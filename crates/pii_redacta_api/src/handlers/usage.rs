@@ -237,7 +237,9 @@ pub async fn get_dashboard_stats(
     let now = Utc::now();
     let current_month_start = chrono::NaiveDate::from_ymd_opt(now.year(), now.month(), 1)
         .expect("current date always yields a valid first-of-month");
-    let prev_month_start = current_month_start - Months::new(1);
+    let prev_month_start = current_month_start
+        .checked_sub_months(Months::new(1))
+        .expect("subtracting 1 month from first-of-month is always valid");
 
     // Current month totals
     let current = sqlx::query_as::<_, (i64, i64)>(
@@ -355,8 +357,12 @@ pub async fn get_dashboard_stats(
     let recent_activity: Vec<DashboardActivity> = activities
         .into_iter()
         .map(|(id, req_type, file_name, created_at)| {
+            // S9-R4-13: Truncate file_name to prevent oversized responses / XSS defense-in-depth
             let description = match file_name {
-                Some(name) => format!("Processed file: {}", name),
+                Some(name) => {
+                    let safe_name: String = name.chars().take(255).collect();
+                    format!("Processed file: {}", safe_name)
+                }
                 None => format!("API request: {}", req_type),
             };
             DashboardActivity {

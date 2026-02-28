@@ -48,6 +48,9 @@ pub async fn health() -> (StatusCode, Json<HealthResponse>) {
 }
 
 /// Deep health check with dependency verification
+///
+/// Note (S9-R4-12): Requires `AppState` — only usable with `create_app_with_auth()`,
+/// not the MVP `create_app()` which uses `Arc<JobQueue>` as state.
 pub async fn health_deep(State(state): State<AppState>) -> (StatusCode, Json<HealthResponse>) {
     let start = std::time::Instant::now();
 

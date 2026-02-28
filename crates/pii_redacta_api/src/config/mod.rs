@@ -126,12 +126,29 @@ impl Default for DatabaseConfig {
     }
 }
 
-/// Redis configuration
-#[derive(Debug, Clone, Deserialize)]
+/// Redis configuration (S9-R4-01: custom Debug redacts credentials)
+#[derive(Clone, Deserialize)]
 pub struct RedisConfig {
     /// Redis URL
     #[serde(default = "default_redis_url")]
     pub url: String,
+}
+
+impl std::fmt::Debug for RedisConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let redacted_url = if let Some(at_pos) = self.url.find('@') {
+            if let Some(scheme_end) = self.url.find("://") {
+                format!("{}://***{}", &self.url[..scheme_end], &self.url[at_pos..])
+            } else {
+                "[redacted]".to_string()
+            }
+        } else {
+            self.url.clone()
+        };
+        f.debug_struct("RedisConfig")
+            .field("url", &redacted_url)
+            .finish()
+    }
 }
 
 fn default_redis_url() -> String {

@@ -2,7 +2,7 @@
 //!
 //! Provides JWT token generation and validation for user authentication.
 
-use chrono::{Duration, Utc};
+use chrono::Utc;
 use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -84,7 +84,10 @@ pub fn generate_token(
     let claims = Claims {
         sub: user_id.to_string(),
         iat: now.timestamp(),
-        exp: (now + Duration::hours(config.expiration_hours)).timestamp(),
+        exp: (now
+            + chrono::Duration::try_hours(config.expiration_hours)
+                .expect("expiration_hours within valid range"))
+        .timestamp(),
         email: email.to_string(),
         is_admin,
     };
