@@ -185,14 +185,19 @@ async fn check_playground_quota(
     state: &AppState,
     user_id: Uuid,
 ) -> Result<PlaygroundQuota, PlaygroundError> {
-    // Look up the user's subscription → tier limits/features
+    // Look up the user's subscription → tier limits/features.
+    // P2 fix: verify the user account is not soft-deleted and the subscription period
+    // has not expired, preventing access by deleted users with unexpired JWTs.
     let row = sqlx::query_as::<_, (serde_json::Value, serde_json::Value)>(
         r#"
         SELECT t.limits, t.features
         FROM subscriptions s
         JOIN tiers t ON s.tier_id = t.id
+        JOIN users u ON u.id = s.user_id
         WHERE s.user_id = $1
+        AND u.deleted_at IS NULL
         AND s.status IN ('trial', 'active', 'past_due')
+        AND (s.current_period_end IS NULL OR s.current_period_end > NOW())
         ORDER BY s.created_at DESC
         LIMIT 1
         "#,
@@ -311,7 +316,9 @@ pub async fn playground_text(
         file_name: None,
         file_size_bytes: None,
         file_type: None,
-        processing_time_ms: Some(processing_time_ms.round() as i32),
+        processing_time_ms: Some(
+            i32::try_from(processing_time_ms.round() as i64).unwrap_or(i32::MAX),
+        ),
         page_count: None,
         detections_count: Some(detections_count),
         success: true,
@@ -351,30 +358,38 @@ pub async fn playground_file(
     let mut mime_type = "application/octet-stream".to_string();
     let mut redact = false;
 
-    while let Ok(Some(field)) = multipart.next_field().await {
-        match field.name() {
-            Some("file") => {
-                file_name = field.file_name().map(sanitize_file_name);
-                if let Some(ct) = field.content_type() {
-                    mime_type = ct.to_string();
+    // P7 fix: log multipart parse errors instead of silently breaking the loop
+    loop {
+        match multipart.next_field().await {
+            Ok(Some(field)) => match field.name() {
+                Some("file") => {
+                    file_name = field.file_name().map(sanitize_file_name);
+                    if let Some(ct) = field.content_type() {
+                        mime_type = ct.to_string();
+                    }
+                    let bytes = field
+                        .bytes()
+                        .await
+                        .map_err(|_| PlaygroundError::FileTooLarge)?;
+                    if bytes.len() > MAX_FILE_BYTES {
+                        return Err(PlaygroundError::FileTooLarge);
+                    }
+                    file_bytes = Some(bytes.to_vec());
                 }
-                let bytes = field
-                    .bytes()
-                    .await
-                    .map_err(|_| PlaygroundError::FileTooLarge)?;
-                if bytes.len() > MAX_FILE_BYTES {
-                    return Err(PlaygroundError::FileTooLarge);
+                Some("redact") => {
+                    // M2 fix: read the redact field from the multipart form
+                    if let Ok(val) = field.text().await {
+                        redact = val == "true" || val == "1";
+                    }
                 }
-                file_bytes = Some(bytes.to_vec());
-            }
-            Some("redact") => {
-                // M2 fix: read the redact field from the multipart form
-                if let Ok(val) = field.text().await {
-                    redact = val == "true" || val == "1";
+                _ => {
+                    // Skip unknown fields
                 }
-            }
-            _ => {
-                // Skip unknown fields
+            },
+            Ok(None) => break,
+            Err(e) => {
+                tracing::warn!("Multipart parse error: {e}");
+                break;
             }
         }
     }
@@ -386,10 +401,19 @@ pub async fn playground_file(
 
     // Validate MIME type. This trusts the client-supplied Content-Type header.
     // PDF and DOCX extractors independently validate magic bytes and will return
-    // ExtractionFailed for mismatched content, so the risk is limited to the
-    // text/plain path where any bytes are accepted as lossy UTF-8.
+    // ExtractionFailed for mismatched content.
     if !is_supported_mime(&mime_type) {
         return Err(PlaygroundError::UnsupportedFileType(mime_type));
+    }
+
+    // P3 fix: for text/plain and text/csv uploads, verify the content is valid UTF-8
+    // to reject binary files masquerading as text (avoids wasting regex time on garbage).
+    if (mime_type == "text/plain" || mime_type == "text/csv")
+        && std::str::from_utf8(&file_bytes).is_err()
+    {
+        return Err(PlaygroundError::ExtractionFailed(
+            "File content is not valid UTF-8 text".to_string(),
+        ));
     }
 
     // Check file size against tier limit
@@ -410,15 +434,52 @@ pub async fn playground_file(
         other => other,
     };
 
-    // Extract text
-    let extracted = Extractor::extract(&file_bytes, Some(extraction_mime))
-        .map_err(|e| PlaygroundError::ExtractionFailed(e.to_string()))?;
+    // M2 fix: saturating cast prevents silent wraparound if MAX_FILE_BYTES is ever raised
+    let file_size = i32::try_from(file_bytes.len()).unwrap_or(i32::MAX);
+    let ip = connect_info.map(|ci| ci.0.ip().to_string());
 
-    if extracted.text.is_empty() {
-        return Err(PlaygroundError::ExtractionFailed(
-            "No text could be extracted from the file".to_string(),
-        ));
-    }
+    // Extract text — P6 fix: record failures in usage_logs so they appear in history
+    let extracted = match Extractor::extract(&file_bytes, Some(extraction_mime)) {
+        Ok(e) if e.text.is_empty() => {
+            let err_msg = "No text could be extracted from the file";
+            let record = pii_redacta_core::db::usage::UsageRecord {
+                user_id: auth_user.user_id,
+                api_key_id: None,
+                request_type: "playground_file",
+                file_name: file_name.as_deref(),
+                file_size_bytes: Some(file_size),
+                file_type: Some(&mime_type),
+                processing_time_ms: None,
+                page_count: None,
+                detections_count: None,
+                success: false,
+                error_message: Some(err_msg),
+                ip_address: ip.as_deref(),
+            };
+            record_playground_usage(state.db.pool(), &record).await;
+            return Err(PlaygroundError::ExtractionFailed(err_msg.to_string()));
+        }
+        Ok(e) => e,
+        Err(e) => {
+            let err_msg = e.to_string();
+            let record = pii_redacta_core::db::usage::UsageRecord {
+                user_id: auth_user.user_id,
+                api_key_id: None,
+                request_type: "playground_file",
+                file_name: file_name.as_deref(),
+                file_size_bytes: Some(file_size),
+                file_type: Some(&mime_type),
+                processing_time_ms: None,
+                page_count: None,
+                detections_count: None,
+                success: false,
+                error_message: Some(&err_msg),
+                ip_address: ip.as_deref(),
+            };
+            record_playground_usage(state.db.pool(), &record).await;
+            return Err(PlaygroundError::ExtractionFailed(err_msg));
+        }
+    };
 
     // Detect PII
     let detector = PatternDetector::new();
@@ -438,8 +499,6 @@ pub async fn playground_file(
 
     let text_length = extracted.text.len();
     let detections_count = i32::try_from(entities.len()).unwrap_or(i32::MAX);
-    // M2 fix: saturating cast prevents silent wraparound if MAX_FILE_BYTES is ever raised
-    let file_size = i32::try_from(file_bytes.len()).unwrap_or(i32::MAX);
 
     // Record metrics
     state
@@ -447,7 +506,6 @@ pub async fn playground_file(
         .record_detection(detections_count as u64, processing_time_ms);
 
     // Record usage synchronously for accurate quota tracking (C1 fix)
-    let ip = connect_info.map(|ci| ci.0.ip().to_string());
     let record = pii_redacta_core::db::usage::UsageRecord {
         user_id: auth_user.user_id,
         api_key_id: None,
@@ -455,7 +513,9 @@ pub async fn playground_file(
         file_name: file_name.as_deref(),
         file_size_bytes: Some(file_size),
         file_type: Some(&mime_type),
-        processing_time_ms: Some(processing_time_ms.round() as i32),
+        processing_time_ms: Some(
+            i32::try_from(processing_time_ms.round() as i64).unwrap_or(i32::MAX),
+        ),
         page_count: None,
         detections_count: Some(detections_count),
         success: true,

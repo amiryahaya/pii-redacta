@@ -72,14 +72,19 @@ export function PlaygroundPage() {
       if (!selectedFile) return
       fileMutation.mutate(selectedFile)
     }
-  }, [mode, text, redact, selectedFile, textMutation, fileMutation])
+  // P5 fix: TanStack Query's .mutate is referentially stable — omit mutation
+  // objects from deps to avoid recreating this callback on every render.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, text, redact, selectedFile])
 
   const handleFileDrop = useCallback(
     (e: React.DragEvent) => {
       e.preventDefault()
       const file = e.dataTransfer.files[0]
       if (file) {
-        const ext = file.name.slice(file.name.lastIndexOf('.')).toLowerCase()
+        // P8 fix: handle files without extensions (lastIndexOf returns -1)
+        const dotIndex = file.name.lastIndexOf('.')
+        const ext = dotIndex > 0 ? file.name.slice(dotIndex).toLowerCase() : ''
         if (!ACCEPTED_EXTENSIONS.includes(ext)) {
           showError('Unsupported file type. Please use TXT, CSV, PDF, or DOCX.')
           return
@@ -95,7 +100,9 @@ export function PlaygroundPage() {
     (e: React.ChangeEvent<HTMLInputElement>) => {
       const file = e.target.files?.[0]
       if (file) {
-        const ext = file.name.slice(file.name.lastIndexOf('.')).toLowerCase()
+        // P8 fix: handle files without extensions (lastIndexOf returns -1)
+        const dotIndex = file.name.lastIndexOf('.')
+        const ext = dotIndex > 0 ? file.name.slice(dotIndex).toLowerCase() : ''
         if (!ACCEPTED_EXTENSIONS.includes(ext)) {
           showError('Unsupported file type. Please use TXT, CSV, PDF, or DOCX.')
           return
