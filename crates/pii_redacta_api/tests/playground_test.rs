@@ -442,6 +442,7 @@ async fn test_playground_daily_limit_enforced() {
         playground_max_daily: Some(2),
         playground_max_file_size: Some(1_048_576),
         retention_days: Some(30),
+        ..Default::default()
     };
 
     let features = pii_redacta_core::db::models::TierFeatures {

@@ -77,6 +77,21 @@ pub struct TierLimits {
     /// Data retention period in days (None = unlimited)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub retention_days: Option<i32>,
+
+    /// Maximum batch items per job (None = unlimited)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "maxBatchItems")]
+    pub max_batch_items: Option<i32>,
+
+    /// Maximum webhook endpoints per user (None = unlimited)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "maxWebhookEndpoints")]
+    pub max_webhook_endpoints: Option<i32>,
+
+    /// Maximum custom rules per user (None = unlimited)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "maxCustomRules")]
+    pub max_custom_rules: Option<i32>,
 }
 
 /// Tier features configuration (stored as JSONB)
@@ -232,6 +247,8 @@ pub enum RequestType {
     ApiRedact,
     ApiDetectStream,
     FileUpload,
+    BatchDetect,
+    BatchRedact,
 }
 
 /// Usage log entry for analytics and limits

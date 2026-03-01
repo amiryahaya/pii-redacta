@@ -16,6 +16,7 @@ pub enum EntityType {
     PersonName,
     DateOfBirth,
     IpAddress,
+    Custom,
 }
 
 impl std::fmt::Display for EntityType {
@@ -31,6 +32,7 @@ impl std::fmt::Display for EntityType {
             EntityType::PersonName => "PERSON_NAME",
             EntityType::DateOfBirth => "DOB",
             EntityType::IpAddress => "IP_ADDRESS",
+            EntityType::Custom => "CUSTOM",
         };
         write!(f, "{}", s)
     }
@@ -45,6 +47,8 @@ pub struct Entity {
     pub end: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub confidence: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub custom_label: Option<String>,
 }
 
 impl Entity {
@@ -56,6 +60,19 @@ impl Entity {
             start,
             end,
             confidence: None,
+            custom_label: None,
+        }
+    }
+
+    /// Create a custom entity with a user-defined label
+    pub fn custom(label: &str, value: &str, start: usize, end: usize, confidence: f32) -> Self {
+        Self {
+            entity_type: EntityType::Custom,
+            value: value.to_string(),
+            start,
+            end,
+            confidence: Some(confidence),
+            custom_label: Some(label.to_string()),
         }
     }
 

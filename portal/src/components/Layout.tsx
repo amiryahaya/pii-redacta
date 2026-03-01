@@ -7,6 +7,9 @@ import {
   Settings,
   LogOut,
   Shield,
+  FileCode2,
+  Layers,
+  Webhook,
 } from 'lucide-react'
 import { useAuthStore } from '../stores/authStore'
 import { authApi } from '../lib/api'
@@ -16,6 +19,9 @@ const navigation = [
   { name: 'Playground', href: '/playground', icon: FlaskConical },
   { name: 'API Keys', href: '/api-keys', icon: Key },
   { name: 'Usage', href: '/usage', icon: BarChart3 },
+  { name: 'Custom Rules', href: '/rules', icon: FileCode2 },
+  { name: 'Batch', href: '/batch', icon: Layers },
+  { name: 'Webhooks', href: '/webhooks', icon: Webhook },
   { name: 'Settings', href: '/settings', icon: Settings },
 ]
 

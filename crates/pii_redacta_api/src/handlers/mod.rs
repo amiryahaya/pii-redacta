@@ -2,14 +2,17 @@
 
 pub mod api_keys;
 pub mod auth;
+pub mod batch;
 pub mod detection;
 pub mod health;
 pub mod jobs;
 pub mod metrics;
 pub mod playground;
+pub mod rules;
 pub mod subscription;
 pub mod upload;
 pub mod usage;
+pub mod webhooks;
 
 use axum::{
     extract::{Extension, State},

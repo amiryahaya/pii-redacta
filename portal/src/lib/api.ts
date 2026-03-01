@@ -16,6 +16,12 @@ import type {
   UsageSummary,
   PlaygroundResponse,
   PlaygroundHistoryEntry,
+  CustomRule,
+  RuleTestResult,
+  BatchJob,
+  BatchResultItem,
+  WebhookEndpoint,
+  WebhookDelivery,
 } from '../types'
 
 const api = axios.create({
@@ -128,6 +134,72 @@ export const playgroundApi = {
 // Dashboard API
 export const dashboardApi = {
   getStats: () => api.get<DashboardStats>('/dashboard/stats'),
+}
+
+// Custom Rules API
+export const rulesApi = {
+  create: (data: {
+    name: string
+    description?: string
+    pattern: string
+    entityLabel: string
+    confidence?: number
+  }) => api.post<CustomRule>('/rules', data),
+
+  list: () => api.get<CustomRule[]>('/rules'),
+
+  get: (id: string) => api.get<CustomRule>(`/rules/${id}`),
+
+  update: (
+    id: string,
+    data: {
+      name?: string
+      description?: string
+      pattern?: string
+      entityLabel?: string
+      confidence?: number
+      isActive?: boolean
+    }
+  ) => api.put<CustomRule>(`/rules/${id}`, data),
+
+  delete: (id: string) => api.delete(`/rules/${id}`),
+
+  test: (id: string, data: { text: string }) =>
+    api.post<RuleTestResult>(`/rules/${id}/test`, data),
+}
+
+// Batch Processing API
+export const batchApi = {
+  submit: (data: {
+    items: string[]
+    redact?: boolean
+    useCustomRules?: boolean
+  }) => api.post<BatchJob>('/batch/detect', data),
+
+  getStatus: (id: string) => api.get<BatchJob>(`/batch/${id}`),
+
+  getResults: (id: string) =>
+    api.get<BatchResultItem[]>(`/batch/${id}/results`),
+}
+
+// Webhooks API
+export const webhooksApi = {
+  create: (data: {
+    url: string
+    description?: string
+    events: string[]
+  }) => api.post<WebhookEndpoint>('/webhooks', data),
+
+  list: () => api.get<WebhookEndpoint[]>('/webhooks'),
+
+  get: (id: string) => api.get<WebhookEndpoint>(`/webhooks/${id}`),
+
+  delete: (id: string) => api.delete(`/webhooks/${id}`),
+
+  test: (id: string) => api.post(`/webhooks/${id}/test`),
+
+  deliveries: (id: string) =>
+    api.get<WebhookDelivery[]>(`/webhooks/${id}/deliveries`),
 }
 
 export default api

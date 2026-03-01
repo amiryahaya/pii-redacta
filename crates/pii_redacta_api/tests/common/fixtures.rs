@@ -157,6 +157,7 @@ pub async fn create_user_with_subscription(
         playground_max_daily: Some(10),
         playground_max_file_size: Some(1_048_576),
         retention_days: Some(30),
+        ..Default::default()
     };
 
     let features = TierFeatures {

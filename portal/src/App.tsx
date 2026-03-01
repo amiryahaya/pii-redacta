@@ -8,6 +8,9 @@ import { PlaygroundPage } from './pages/PlaygroundPage'
 import { ApiKeysPage } from './pages/ApiKeysPage'
 import { UsagePage } from './pages/UsagePage'
 import { SettingsPage } from './pages/SettingsPage'
+import { CustomRulesPage } from './pages/CustomRulesPage'
+import { BatchPage } from './pages/BatchPage'
+import { WebhooksPage } from './pages/WebhooksPage'
 import { ToastProvider } from './hooks/useToast'
 
 function App() {
@@ -36,6 +39,9 @@ function App() {
             <Route path="playground" element={<PlaygroundPage />} />
             <Route path="api-keys" element={<ApiKeysPage />} />
             <Route path="usage" element={<UsagePage />} />
+            <Route path="rules" element={<CustomRulesPage />} />
+            <Route path="batch" element={<BatchPage />} />
+            <Route path="webhooks" element={<WebhooksPage />} />
             <Route path="settings" element={<SettingsPage />} />
           </Route>
 

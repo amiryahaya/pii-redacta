@@ -44,6 +44,9 @@ export interface TierLimits {
   playgroundMaxDaily: number | null
   playgroundMaxFileSize: number | null
   retentionDays: number | null
+  maxBatchItems: number | null
+  maxWebhookEndpoints: number | null
+  maxCustomRules: number | null
 }
 
 export interface TierFeatures {
@@ -163,4 +166,73 @@ export interface DashboardStats {
     description: string
     timestamp: string
   }>
+}
+
+// Custom Rules
+export interface CustomRule {
+  id: string
+  name: string
+  description: string | null
+  pattern: string
+  entityLabel: string
+  confidence: number
+  isActive: boolean
+  createdAt: string
+  updatedAt: string
+}
+
+export interface RuleTestResult {
+  matches: Array<{
+    value: string
+    start: number
+    end: number
+    entityLabel: string
+    confidence: number
+  }>
+  processingTimeMs: number
+}
+
+// Batch Processing
+export interface BatchJob {
+  id: string
+  status: string
+  totalItems: number
+  completedItems: number
+  failedItems: number
+  redact: boolean
+  useCustomRules: boolean
+  createdAt: string
+  completedAt: string | null
+}
+
+export interface BatchResultItem {
+  itemIndex: number
+  status: string
+  entities: PlaygroundEntity[] | null
+  redactedText: string | null
+  processingTimeMs: number | null
+  errorMessage: string | null
+}
+
+// Webhooks
+export interface WebhookEndpoint {
+  id: string
+  url: string
+  description: string | null
+  secret: string
+  events: string[]
+  isActive: boolean
+  failureCount: number
+  lastTriggeredAt: string | null
+  createdAt: string
+}
+
+export interface WebhookDelivery {
+  id: string
+  eventType: string
+  status: string
+  httpStatus: number | null
+  attempts: number
+  createdAt: string
+  deliveredAt: string | null
 }

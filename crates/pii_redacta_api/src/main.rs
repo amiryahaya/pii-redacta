@@ -92,6 +92,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         JobProcessor::new(state.job_queue.clone(), Some(state.metrics.clone())).start();
     info!("Background job processor spawned");
 
+    // Spawn webhook delivery service
+    let webhook_service = std::sync::Arc::new(
+        pii_redacta_api::webhook_delivery::WebhookDeliveryService::new(db.clone()),
+    );
+    let _webhook_handle = webhook_service.start();
+    info!("Webhook delivery service spawned");
+
     // Bind to address
     let addr = config.server_addr()?;
     let listener = match tokio::net::TcpListener::bind(addr).await {

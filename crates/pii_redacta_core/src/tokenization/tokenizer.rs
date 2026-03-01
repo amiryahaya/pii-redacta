@@ -35,6 +35,19 @@ impl TokenGenerator {
 
         format!("<<PII_{}_{}>>", entity_type, hash.to_uppercase())
     }
+
+    /// Generate a deterministic token for a custom entity with a label
+    ///
+    /// Format: `<<PII_CUSTOM_{LABEL}_{HASH}>>`
+    pub fn generate_custom(&self, label: &str, value: &str) -> String {
+        let mut hasher = Sha256::new();
+        hasher.update(&self.tenant_id);
+        hasher.update(value.as_bytes());
+
+        let hash = hex::encode(&hasher.finalize()[..6]);
+
+        format!("<<PII_CUSTOM_{}_{}>>", label, hash.to_uppercase())
+    }
 }
 
 /// Tokenizer for redacting and restoring PII
@@ -74,7 +87,15 @@ impl Tokenizer {
         sorted_entities = self.remove_overlapping(sorted_entities);
 
         for entity in sorted_entities {
-            let token = self.generator.generate(entity.entity_type, &entity.value);
+            let token = if entity.entity_type == EntityType::Custom {
+                if let Some(ref label) = entity.custom_label {
+                    self.generator.generate_custom(label, &entity.value)
+                } else {
+                    self.generator.generate(entity.entity_type, &entity.value)
+                }
+            } else {
+                self.generator.generate(entity.entity_type, &entity.value)
+            };
 
             // Store mapping from token to original value
             token_map.insert(token.clone(), entity.value.clone());

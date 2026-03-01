@@ -10,6 +10,7 @@ pub mod jobs;
 pub mod jwt;
 pub mod metrics;
 pub mod middleware;
+pub mod webhook_delivery;
 
 #[cfg(test)]
 mod security_test;
@@ -233,6 +234,45 @@ pub async fn create_app_with_auth_opts(
         .route(
             "/api/v1/subscription",
             get(handlers::subscription::get_subscription),
+        )
+        // Custom Rules
+        .route(
+            "/api/v1/rules",
+            post(handlers::rules::create_rule).get(handlers::rules::list_rules),
+        )
+        .route(
+            "/api/v1/rules/:id",
+            get(handlers::rules::get_rule)
+                .put(handlers::rules::update_rule)
+                .delete(handlers::rules::delete_rule),
+        )
+        .route("/api/v1/rules/:id/test", post(handlers::rules::test_rule))
+        // Batch Processing
+        .route("/api/v1/batch/detect", post(handlers::batch::submit_batch))
+        .route(
+            "/api/v1/batch/:batch_id",
+            get(handlers::batch::get_batch_status),
+        )
+        .route(
+            "/api/v1/batch/:batch_id/results",
+            get(handlers::batch::get_batch_results),
+        )
+        // Webhooks
+        .route(
+            "/api/v1/webhooks",
+            post(handlers::webhooks::create_webhook).get(handlers::webhooks::list_webhooks),
+        )
+        .route(
+            "/api/v1/webhooks/:id",
+            get(handlers::webhooks::get_webhook).delete(handlers::webhooks::delete_webhook),
+        )
+        .route(
+            "/api/v1/webhooks/:id/test",
+            post(handlers::webhooks::test_webhook),
+        )
+        .route(
+            "/api/v1/webhooks/:id/deliveries",
+            get(handlers::webhooks::list_deliveries),
         )
         // Metrics (authenticated)
         .route("/metrics", get(handlers::metrics::metrics_authenticated))
