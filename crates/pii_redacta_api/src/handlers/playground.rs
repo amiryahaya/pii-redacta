@@ -264,6 +264,9 @@ pub async fn playground_text(
     if request.text.is_empty() {
         return Err(PlaygroundError::EmptyInput);
     }
+    // Note: len() measures bytes (not chars). This is intentional — the 1MB limit
+    // is a byte-budget constraint matching the "max 1MB" error message and the
+    // body-size middleware, not a character count.
     if request.text.len() > MAX_TEXT_LENGTH {
         return Err(PlaygroundError::TextTooLong);
     }
@@ -271,7 +274,8 @@ pub async fn playground_text(
     // Quota check
     let quota = check_playground_quota(&state, auth_user.user_id).await?;
 
-    // Detect PII
+    // Detect PII — PatternDetector is a zero-sized type (all regex patterns are
+    // compiled once via once_cell::Lazy), so `new()` has no per-request cost.
     let detector = PatternDetector::new();
     let start = std::time::Instant::now();
     let entities = detector.detect_all(&request.text);
@@ -467,6 +471,9 @@ pub async fn playground_file(
 }
 
 /// GET /api/v1/playground/history — Playground submission history (L4: paginated)
+///
+/// Returns a bare JSON array for simplicity. A paginated envelope with `total`/`hasMore`
+/// fields can be added in a future sprint if needed.
 pub async fn playground_history(
     State(state): State<AppState>,
     Extension(auth_user): Extension<AuthUser>,

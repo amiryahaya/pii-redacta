@@ -226,6 +226,12 @@ pub async fn get_trial_tier_id(db: &Database) -> Result<Uuid, sqlx::Error> {
 /// Clean up test data
 pub async fn cleanup_test_data(db: &Database, user_ids: &[Uuid]) {
     for user_id in user_ids {
+        // Delete usage logs
+        let _ = sqlx::query("DELETE FROM usage_logs WHERE user_id = $1")
+            .bind(user_id)
+            .execute(db.pool())
+            .await;
+
         // Delete API keys
         let _ = sqlx::query("DELETE FROM api_keys WHERE user_id = $1")
             .bind(user_id)

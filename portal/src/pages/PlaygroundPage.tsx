@@ -72,16 +72,23 @@ export function PlaygroundPage() {
     }
   }, [mode, text, redact, selectedFile, textMutation, fileMutation])
 
+  const ACCEPTED_EXTENSIONS = ['.txt', '.csv', '.pdf', '.docx']
+
   const handleFileDrop = useCallback(
     (e: React.DragEvent) => {
       e.preventDefault()
       const file = e.dataTransfer.files[0]
       if (file) {
+        const ext = file.name.slice(file.name.lastIndexOf('.')).toLowerCase()
+        if (!ACCEPTED_EXTENSIONS.includes(ext)) {
+          showError('Unsupported file type. Please use TXT, CSV, PDF, or DOCX.')
+          return
+        }
         setSelectedFile(file)
         setMode('file')
       }
     },
-    []
+    [showError]
   )
 
   const handleFileSelect = useCallback(

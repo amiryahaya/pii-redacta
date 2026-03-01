@@ -121,8 +121,8 @@ export const playgroundApi = {
     })
   },
 
-  getHistory: () =>
-    api.get<PlaygroundHistoryEntry[]>('/playground/history'),
+  getHistory: (params?: { limit?: number; offset?: number }) =>
+    api.get<PlaygroundHistoryEntry[]>('/playground/history', { params }),
 }
 
 // Dashboard API

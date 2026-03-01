@@ -508,5 +508,10 @@ async fn test_playground_daily_limit_enforced() {
         "Third request should be rejected (daily limit = 2)"
     );
 
+    // Clean up user data (subscriptions, usage_logs, etc.) and the custom tier
     fixtures::cleanup_test_data(&db, &[user_id]).await;
+    let _ = sqlx::query("DELETE FROM tiers WHERE id = $1")
+        .bind(tier_id)
+        .execute(db.pool())
+        .await;
 }
