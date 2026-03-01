@@ -94,9 +94,16 @@ export function PlaygroundPage() {
   const handleFileSelect = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
       const file = e.target.files?.[0]
-      if (file) setSelectedFile(file)
+      if (file) {
+        const ext = file.name.slice(file.name.lastIndexOf('.')).toLowerCase()
+        if (!ACCEPTED_EXTENSIONS.includes(ext)) {
+          showError('Unsupported file type. Please use TXT, CSV, PDF, or DOCX.')
+          return
+        }
+        setSelectedFile(file)
+      }
     },
-    []
+    [showError]
   )
 
   // Group entities by type
