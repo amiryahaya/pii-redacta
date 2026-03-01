@@ -252,9 +252,9 @@ pub async fn cleanup_test_data(db: &Database, user_ids: &[Uuid]) {
             .execute(db.pool())
             .await;
 
-        // Delete orphaned tiers now that subscriptions no longer reference them
+        // Delete test-created tiers (skip the shared seeded 'trial' tier)
         for tier_id in tier_ids {
-            let _ = sqlx::query("DELETE FROM tiers WHERE id = $1")
+            let _ = sqlx::query("DELETE FROM tiers WHERE id = $1 AND name != 'trial'")
                 .bind(tier_id)
                 .execute(db.pool())
                 .await;
