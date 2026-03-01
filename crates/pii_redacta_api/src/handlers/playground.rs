@@ -146,10 +146,13 @@ impl IntoResponse for PlaygroundError {
                     "Failed to extract text from file".to_string(),
                 )
             }
-            PlaygroundError::Database(_) => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "An unexpected error occurred".to_string(),
-            ),
+            PlaygroundError::Database(ref e) => {
+                tracing::error!("Playground database error: {e}");
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "An unexpected error occurred".to_string(),
+                )
+            }
         };
         let body = serde_json::json!({
             "error": {
@@ -292,7 +295,7 @@ pub async fn playground_text(
     };
 
     let text_length = request.text.len();
-    let detections_count = entities.len() as i32;
+    let detections_count = i32::try_from(entities.len()).unwrap_or(i32::MAX);
 
     // Record metrics
     state
@@ -381,7 +384,10 @@ pub async fn playground_file(
         return Err(PlaygroundError::EmptyInput);
     }
 
-    // Validate MIME type
+    // Validate MIME type. This trusts the client-supplied Content-Type header.
+    // PDF and DOCX extractors independently validate magic bytes and will return
+    // ExtractionFailed for mismatched content, so the risk is limited to the
+    // text/plain path where any bytes are accepted as lossy UTF-8.
     if !is_supported_mime(&mime_type) {
         return Err(PlaygroundError::UnsupportedFileType(mime_type));
     }
@@ -431,7 +437,7 @@ pub async fn playground_file(
     };
 
     let text_length = extracted.text.len();
-    let detections_count = entities.len() as i32;
+    let detections_count = i32::try_from(entities.len()).unwrap_or(i32::MAX);
     // M2 fix: saturating cast prevents silent wraparound if MAX_FILE_BYTES is ever raised
     let file_size = i32::try_from(file_bytes.len()).unwrap_or(i32::MAX);
 
@@ -480,6 +486,7 @@ pub async fn playground_history(
     Query(params): Query<HistoryQuery>,
 ) -> Result<Json<Vec<PlaygroundHistoryEntry>>, PlaygroundError> {
     let limit = params.limit.unwrap_or(20).clamp(1, 100);
+    // i64 for SQLx BIGINT compatibility; clamped to non-negative
     let offset = params.offset.unwrap_or(0).max(0);
 
     let rows = sqlx::query_as::<

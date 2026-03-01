@@ -508,10 +508,42 @@ async fn test_playground_daily_limit_enforced() {
         "Third request should be rejected (daily limit = 2)"
     );
 
-    // Clean up user data (subscriptions, usage_logs, etc.) and the custom tier
     fixtures::cleanup_test_data(&db, &[user_id]).await;
-    let _ = sqlx::query("DELETE FROM tiers WHERE id = $1")
-        .bind(tier_id)
-        .execute(db.pool())
-        .await;
+}
+
+// ============================================================================
+// No Subscription Test
+// ============================================================================
+
+#[tokio::test]
+async fn test_playground_text_no_subscription_rejected() {
+    let app = setup_app().await;
+    let db = setup_db().await;
+
+    // Create user without any subscription
+    let email = format!("pg-nosub-{:.8}@example.com", uuid::Uuid::new_v4());
+    let user_id = fixtures::create_user(&db, &email, None)
+        .await
+        .expect("Failed to create user");
+
+    let token = get_auth_token(user_id, &email).await;
+
+    let request = Request::builder()
+        .uri("/api/v1/playground/text")
+        .method("POST")
+        .header("Content-Type", "application/json")
+        .header("Authorization", format!("Bearer {}", token))
+        .body(Body::from(
+            json!({ "text": "My email is test@example.com" }).to_string(),
+        ))
+        .unwrap();
+
+    let response = app.oneshot(request).await.unwrap();
+    assert_eq!(
+        response.status(),
+        StatusCode::FORBIDDEN,
+        "User without subscription should get 403"
+    );
+
+    fixtures::cleanup_test_data(&db, &[user_id]).await;
 }

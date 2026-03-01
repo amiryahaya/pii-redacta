@@ -238,6 +238,14 @@ pub async fn cleanup_test_data(db: &Database, user_ids: &[Uuid]) {
             .execute(db.pool())
             .await;
 
+        // Delete orphaned tiers created for this user's subscriptions
+        let _ = sqlx::query(
+            "DELETE FROM tiers WHERE id IN (SELECT tier_id FROM subscriptions WHERE user_id = $1)",
+        )
+        .bind(user_id)
+        .execute(db.pool())
+        .await;
+
         // Delete subscriptions
         let _ = sqlx::query("DELETE FROM subscriptions WHERE user_id = $1")
             .bind(user_id)

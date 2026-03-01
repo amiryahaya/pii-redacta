@@ -126,7 +126,7 @@ export interface PlaygroundEntity {
 export interface PlaygroundResponse {
   entities: PlaygroundEntity[]
   processingTimeMs: number
-  redactedText: string | null
+  redactedText?: string
   textLength: number
   dailyUsage: {
     usedToday: number

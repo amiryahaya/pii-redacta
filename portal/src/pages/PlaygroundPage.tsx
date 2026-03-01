@@ -18,6 +18,8 @@ import type { PlaygroundResponse, PlaygroundHistoryEntry } from '../types'
 
 type InputMode = 'text' | 'file'
 
+const ACCEPTED_EXTENSIONS: readonly string[] = ['.txt', '.csv', '.pdf', '.docx']
+
 export function PlaygroundPage() {
   const { showError } = useToast()
   const queryClient = useQueryClient()
@@ -71,8 +73,6 @@ export function PlaygroundPage() {
       fileMutation.mutate(selectedFile)
     }
   }, [mode, text, redact, selectedFile, textMutation, fileMutation])
-
-  const ACCEPTED_EXTENSIONS = ['.txt', '.csv', '.pdf', '.docx']
 
   const handleFileDrop = useCallback(
     (e: React.DragEvent) => {
@@ -203,6 +203,7 @@ export function PlaygroundPage() {
                   </p>
                   <button
                     onClick={() => setSelectedFile(null)}
+                    aria-label={`Remove file ${selectedFile.name}`}
                     className="mt-2 text-xs text-red-600 hover:text-red-700"
                   >
                     Remove
