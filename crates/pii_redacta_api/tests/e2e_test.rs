@@ -198,7 +198,7 @@ async fn test_register_login_me_flow() {
 async fn test_cors_headers_present() {
     let app = setup_app().await;
 
-    let origins = vec![
+    let origins = [
         "http://localhost:3000",
         "http://localhost:5173",
         "http://127.0.0.1:3000",

@@ -6,7 +6,7 @@ use axum::response::IntoResponse;
 
 #[test]
 fn test_playground_error_status_codes() {
-    let cases: Vec<(PlaygroundError, StatusCode)> = vec![
+    let cases = [
         (PlaygroundError::NotAvailable, StatusCode::FORBIDDEN),
         (
             PlaygroundError::DailyLimitReached,

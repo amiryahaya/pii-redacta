@@ -187,7 +187,7 @@ async fn test_password_validation_scenarios() {
     let app = setup_app().await;
     let email_prefix = format!("auth-pass-{:.8}", uuid::Uuid::new_v4());
 
-    let test_cases = vec![
+    let test_cases = [
         ("short", false, "too short"),
         ("nouppercase123!", false, "no uppercase"),
         ("NOLOWERCASE123!", false, "no lowercase"),

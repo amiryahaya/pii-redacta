@@ -745,7 +745,7 @@ mod tests {
     fn test_auth_handler_error_status_codes() {
         use axum::response::IntoResponse;
 
-        let cases: Vec<(AuthHandlerError, StatusCode)> = vec![
+        let cases = [
             (AuthHandlerError::EmailExists, StatusCode::CONFLICT),
             (
                 AuthHandlerError::InvalidCredentials,

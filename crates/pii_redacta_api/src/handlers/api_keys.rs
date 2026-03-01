@@ -387,7 +387,7 @@ mod tests {
     fn test_error_response_status_codes() {
         use axum::response::IntoResponse;
 
-        let cases: Vec<(ApiKeyHandlerError, axum::http::StatusCode)> = vec![
+        let cases = [
             (
                 ApiKeyHandlerError::InvalidEnvironment,
                 axum::http::StatusCode::BAD_REQUEST,
