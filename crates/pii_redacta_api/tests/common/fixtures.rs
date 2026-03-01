@@ -238,19 +238,27 @@ pub async fn cleanup_test_data(db: &Database, user_ids: &[Uuid]) {
             .execute(db.pool())
             .await;
 
-        // Delete orphaned tiers created for this user's subscriptions
-        let _ = sqlx::query(
-            "DELETE FROM tiers WHERE id IN (SELECT tier_id FROM subscriptions WHERE user_id = $1)",
-        )
-        .bind(user_id)
-        .execute(db.pool())
-        .await;
+        // Collect tier IDs before deleting subscriptions (FK prevents deleting tiers first)
+        let tier_ids: Vec<Uuid> =
+            sqlx::query_scalar("SELECT tier_id FROM subscriptions WHERE user_id = $1")
+                .bind(user_id)
+                .fetch_all(db.pool())
+                .await
+                .unwrap_or_default();
 
         // Delete subscriptions
         let _ = sqlx::query("DELETE FROM subscriptions WHERE user_id = $1")
             .bind(user_id)
             .execute(db.pool())
             .await;
+
+        // Delete orphaned tiers now that subscriptions no longer reference them
+        for tier_id in tier_ids {
+            let _ = sqlx::query("DELETE FROM tiers WHERE id = $1")
+                .bind(tier_id)
+                .execute(db.pool())
+                .await;
+        }
 
         // Delete user
         let _ = sqlx::query("DELETE FROM users WHERE id = $1")

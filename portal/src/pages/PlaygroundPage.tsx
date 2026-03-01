@@ -179,6 +179,7 @@ export function PlaygroundPage() {
           {/* N2 fix: render both panels so aria-controls always references existing DOM */}
           <div className="p-4" id="panel-text" role="tabpanel" aria-labelledby="tab-text" hidden={mode !== 'text'}>
             <textarea
+              aria-label="Text to analyze for PII"
               value={text}
               onChange={(e) => setText(e.target.value)}
               placeholder="Paste text containing PII here... e.g. My email is john@example.com and my phone is +60123456789"
@@ -282,7 +283,7 @@ export function PlaygroundPage() {
                     <Clock className="w-3 h-3" />
                     {result.processingTimeMs.toFixed(1)}ms
                   </span>
-                  <span>{result.textLength.toLocaleString()} chars</span>
+                  <span>{result.textLength.toLocaleString()} bytes</span>
                   <span>{result.entities.length} entities found</span>
                 </div>
 
@@ -346,22 +347,22 @@ export function PlaygroundPage() {
             <table className="min-w-full divide-y divide-gray-200">
               <thead className="bg-gray-50">
                 <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Type
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     File
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Detections
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Time
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Status
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Date
                   </th>
                 </tr>
