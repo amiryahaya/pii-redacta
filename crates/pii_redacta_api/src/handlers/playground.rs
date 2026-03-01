@@ -29,6 +29,9 @@ use uuid::Uuid;
 /// Maximum text length (1 MB)
 const MAX_TEXT_LENGTH: usize = 1_000_000;
 
+/// Maximum length for error messages stored in usage_logs
+const MAX_ERROR_MESSAGE_LEN: usize = 500;
+
 /// Maximum file size for multipart reads (10 MB, matches body size middleware)
 const MAX_FILE_BYTES: usize = 10 * 1024 * 1024;
 
@@ -357,6 +360,7 @@ pub async fn playground_file(
     let mut file_name: Option<String> = None;
     let mut mime_type = "application/octet-stream".to_string();
     let mut redact = false;
+    let mut multipart_error = false;
 
     // P7 fix: log multipart parse errors instead of silently breaking the loop
     loop {
@@ -389,12 +393,23 @@ pub async fn playground_file(
             Ok(None) => break,
             Err(e) => {
                 tracing::warn!("Multipart parse error: {e}");
+                multipart_error = true;
                 break;
             }
         }
     }
 
-    let file_bytes = file_bytes.ok_or(PlaygroundError::EmptyInput)?;
+    // R9-4 fix: if a multipart parse error prevented reading the file field,
+    // return a specific error instead of the misleading "Input text is empty".
+    let file_bytes = match file_bytes {
+        Some(b) => b,
+        None if multipart_error => {
+            return Err(PlaygroundError::ExtractionFailed(
+                "Failed to read uploaded file".to_string(),
+            ));
+        }
+        None => return Err(PlaygroundError::EmptyInput),
+    };
     if file_bytes.is_empty() {
         return Err(PlaygroundError::EmptyInput);
     }
@@ -416,9 +431,9 @@ pub async fn playground_file(
         ));
     }
 
-    // Check file size against tier limit
+    // Check file size against tier limit (R9-7: safe cast for consistency)
     if let Some(max_size) = quota.max_file_size {
-        if file_bytes.len() as i64 > max_size {
+        if i64::try_from(file_bytes.len()).unwrap_or(i64::MAX) > max_size {
             return Err(PlaygroundError::FileTooLarge);
         }
     }
@@ -462,6 +477,8 @@ pub async fn playground_file(
         Ok(e) => e,
         Err(e) => {
             let err_msg = e.to_string();
+            // R9-9 fix: truncate error message to prevent unbounded DB storage
+            let truncated: String = err_msg.chars().take(MAX_ERROR_MESSAGE_LEN).collect();
             let record = pii_redacta_core::db::usage::UsageRecord {
                 user_id: auth_user.user_id,
                 api_key_id: None,
@@ -473,7 +490,7 @@ pub async fn playground_file(
                 page_count: None,
                 detections_count: None,
                 success: false,
-                error_message: Some(&err_msg),
+                error_message: Some(&truncated),
                 ip_address: ip.as_deref(),
             };
             record_playground_usage(state.db.pool(), &record).await;
@@ -545,6 +562,19 @@ pub async fn playground_history(
     Extension(auth_user): Extension<AuthUser>,
     Query(params): Query<HistoryQuery>,
 ) -> Result<Json<Vec<PlaygroundHistoryEntry>>, PlaygroundError> {
+    // R9-1 fix: verify user is not soft-deleted, consistent with analysis endpoints
+    let user_active: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM users WHERE id = $1 AND deleted_at IS NULL)",
+    )
+    .bind(auth_user.user_id)
+    .fetch_one(state.db.pool())
+    .await
+    .unwrap_or(false);
+
+    if !user_active {
+        return Err(PlaygroundError::NotAvailable);
+    }
+
     let limit = params.limit.unwrap_or(20).clamp(1, 100);
     // i64 for SQLx BIGINT compatibility; clamped to non-negative
     let offset = params.offset.unwrap_or(0).max(0);
@@ -603,9 +633,12 @@ pub async fn playground_history(
 
 /// Supported MIME types for playground file upload.
 ///
-/// The abbreviated `application/vnd.openxmlformats` is accepted because the magic-byte
-/// detector may return it for DOCX files. It is mapped to the full DOCX MIME in the
-/// handler before extraction (M4 fix — prevents XLSX being misrouted to DOCX extractor).
+/// The abbreviated `application/vnd.openxmlformats` is accepted because some clients
+/// and magic-byte detectors return it for DOCX files. It is mapped to the full DOCX MIME
+/// in the handler before extraction (M4 fix). **Limitation (R9-6):** an XLSX or PPTX file
+/// uploaded with this abbreviated MIME would be misrouted to the DOCX extractor and fail
+/// with an `ExtractionFailed` error. The client-side `.docx`-only extension filter and
+/// the server-side extraction failure provide defence-in-depth here.
 const SUPPORTED_MIME_TYPES: &[&str] = &[
     "text/plain",
     "text/csv",

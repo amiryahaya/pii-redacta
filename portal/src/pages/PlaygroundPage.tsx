@@ -30,8 +30,12 @@ export function PlaygroundPage() {
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
   const [result, setResult] = useState<PlaygroundResponse | null>(null)
 
-  // History query
-  const { data: history } = useQuery<PlaygroundHistoryEntry[]>({
+  // History query (R9-8: extract loading/error for UI feedback)
+  const {
+    data: history,
+    isLoading: historyLoading,
+    error: historyError,
+  } = useQuery<PlaygroundHistoryEntry[]>({
     queryKey: ['playground-history'],
     queryFn: () => playgroundApi.getHistory().then((r) => r.data),
   })
@@ -352,6 +356,17 @@ export function PlaygroundPage() {
       </div>
 
       {/* History */}
+      {historyLoading && (
+        <div className="bg-white shadow rounded-lg px-6 py-8 text-center text-gray-400">
+          <Loader2 className="w-6 h-6 mx-auto mb-2 animate-spin" />
+          <p className="text-sm">Loading history...</p>
+        </div>
+      )}
+      {historyError && (
+        <div className="bg-white shadow rounded-lg px-6 py-4 text-center text-red-500 text-sm">
+          Failed to load history
+        </div>
+      )}
       {history && history.length > 0 && (
         <div className="bg-white shadow rounded-lg">
           <div className="px-6 py-4 border-b border-gray-200">
